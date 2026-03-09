@@ -1,8 +1,3 @@
-
-import 'audio_visualizer_player_platform_interface.dart';
-
-class AudioVisualizerPlayer {
-  Future<String?> getPlatformVersion() {
-    return AudioVisualizerPlayerPlatform.instance.getPlatformVersion();
-  }
-}
+export 'src/audio_drop_region.dart';
+export 'src/visualizer_player_controller.dart';
+export 'src/mav_native.dart';

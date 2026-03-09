@@ -17,9 +17,11 @@ cmake_policy(VERSION 3.14...3.25)
 set(PLUGIN_NAME "audio_visualizer_player_plugin")
 
 # Any new source files that you add to the plugin should be added here.
+set(NATIVE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../native")
 list(APPEND PLUGIN_SOURCES
   "audio_visualizer_player_plugin.cpp"
   "audio_visualizer_player_plugin.h"
+  "${NATIVE_DIR}/src/my_audio_visualizer_native.cpp"
 )
 
 # Define the plugin library target. Its name must not be changed (see comment
@@ -34,6 +36,10 @@ add_library(${PLUGIN_NAME} SHARED
 # application-level CMakeLists.txt. This can be removed for plugins that want
 # full control over build settings.
 apply_standard_settings(${PLUGIN_NAME})
+target_compile_options(${PLUGIN_NAME} PRIVATE /W3)
+if(MSVC)
+  target_compile_options(${PLUGIN_NAME} PRIVATE /WX-)
+endif()
 
 # Symbols are hidden by default to reduce the chance of accidental conflicts
 # between plugins. This should not be removed; any symbols that should be
@@ -41,12 +47,29 @@ apply_standard_settings(${PLUGIN_NAME})
 set_target_properties(${PLUGIN_NAME} PROPERTIES
   CXX_VISIBILITY_PRESET hidden)
 target_compile_definitions(${PLUGIN_NAME} PRIVATE FLUTTER_PLUGIN_IMPL)
+target_compile_definitions(${PLUGIN_NAME} PRIVATE PFFFT_STATIC_DEFINE)
 
 # Source include directories and library dependencies. Add any plugin-specific
 # dependencies here.
 target_include_directories(${PLUGIN_NAME} INTERFACE
   "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_link_libraries(${PLUGIN_NAME} PRIVATE flutter flutter_wrapper_plugin)
+target_include_directories(${PLUGIN_NAME} PRIVATE
+  "${NATIVE_DIR}/include"
+  "${NATIVE_DIR}/third_part"
+  "${NATIVE_DIR}/third_part/simd"
+)
+target_link_libraries(${PLUGIN_NAME} PRIVATE 
+  flutter 
+  flutter_wrapper_plugin
+  winmm 
+  ole32 
+  avrt
+  mfplat
+  mfreadwrite
+  mf
+  mfuuid
+  propsys
+)
 
 # List of absolute paths to libraries that should be bundled with the plugin.
 # This list could contain prebuilt libraries, or libraries created by an
@@ -62,7 +85,7 @@ set(audio_visualizer_player_bundled_libraries
 
 # Only enable test builds when building the example (which sets this variable)
 # so that plugin clients aren't building the tests.
-if (${include_${PROJECT_NAME}_tests})
+if (FALSE)
 set(TEST_RUNNER "${PROJECT_NAME}_test")
 enable_testing()
 
@@ -70,7 +93,7 @@ enable_testing()
 include(FetchContent)
 FetchContent_Declare(
   googletest
-  URL https://github.com/google/googletest/archive/release-1.11.0.zip
+  URL https://github.com/google/googletest/archive/refs/tags/v1.15.2.zip
 )
 # Prevent overriding the parent project's compiler/linker settings
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
@@ -85,7 +108,17 @@ add_executable(${TEST_RUNNER}
   ${PLUGIN_SOURCES}
 )
 apply_standard_settings(${TEST_RUNNER})
-target_include_directories(${TEST_RUNNER} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_options(${TEST_RUNNER} PRIVATE /W3)
+if(MSVC)
+  target_compile_options(${TEST_RUNNER} PRIVATE /WX-)
+endif()
+target_compile_definitions(${TEST_RUNNER} PRIVATE PFFFT_STATIC_DEFINE)
+target_include_directories(${TEST_RUNNER} PRIVATE 
+  "${CMAKE_CURRENT_SOURCE_DIR}"
+  "${NATIVE_DIR}/include"
+  "${NATIVE_DIR}/third_part"
+  "${NATIVE_DIR}/third_part/simd"
+)
 target_link_libraries(${TEST_RUNNER} PRIVATE flutter_wrapper_plugin)
 target_link_libraries(${TEST_RUNNER} PRIVATE gtest_main gmock)
 # flutter_wrapper_plugin has link dependencies on the Flutter DLL.

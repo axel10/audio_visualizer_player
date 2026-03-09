@@ -38,51 +38,62 @@ typedef _SetVolumeDart = int Function(double);
 
 typedef _ComputeBandsAtMsNative = Int32 Function(Int32, Pointer<Float>, Int32);
 typedef _ComputeBandsAtMsDart = int Function(int, Pointer<Float>, int);
-typedef _ComputeSpectrumAtMsNative = Int32 Function(Int32, Pointer<Float>, Int32);
+typedef _ComputeSpectrumAtMsNative =
+    Int32 Function(Int32, Pointer<Float>, Int32);
 typedef _ComputeSpectrumAtMsDart = int Function(int, Pointer<Float>, int);
 
+/// Low-level native FFI bindings for audio loading, playback, and FFT queries.
+///
+/// Most apps should use [AudioVisualizerPlayerController] instead.
 class MavNative {
   MavNative._(DynamicLibrary lib)
-      : _createFft = lib.lookupFunction<_CreateFftNative, _CreateFftDart>(
-          'mav_create_fft',
-        ),
-        _disposeFft = lib.lookupFunction<_DisposeFftNative, _DisposeFftDart>(
-          'mav_dispose_fft',
-        ),
-        _loadAudioFile =
-            lib.lookupFunction<_LoadAudioFileNative, _LoadAudioFileDart>(
-          'mav_load_audio_file',
-        ),
-        _openAudioForPlayback = lib.lookupFunction<_OpenAudioForPlaybackNative,
-            _OpenAudioForPlaybackDart>('mav_open_audio_for_playback'),
-        _playerPlay =
-            lib.lookupFunction<_PlayerPlayNative, _PlayerPlayDart>(
-          'mav_player_play',
-        ),
-        _playerPause =
-            lib.lookupFunction<_PlayerPauseNative, _PlayerPauseDart>(
-          'mav_player_pause',
-        ),
-        _playerSeekMs =
-            lib.lookupFunction<_PlayerSeekMsNative, _PlayerSeekMsDart>(
-          'mav_player_seek_ms',
-        ),
-        _playerGetPositionMs = lib.lookupFunction<_PlayerGetPositionMsNative,
-            _PlayerGetPositionMsDart>('mav_player_get_position_ms'),
-        _playerIsPlaying = lib.lookupFunction<_PlayerIsPlayingNative,
-            _PlayerIsPlayingDart>('mav_player_is_playing'),
-        _setVolume =
-            lib.lookupFunction<_SetVolumeNative, _SetVolumeDart>(
-          'mav_player_set_volume',
-        ),
-        _getDurationMs =
-            lib.lookupFunction<_GetDurationNative, _GetDurationDart>(
-          'mav_get_audio_duration_ms',
-        ),
-        _computeSpectrumAtMs = lib.lookupFunction<_ComputeSpectrumAtMsNative,
-            _ComputeSpectrumAtMsDart>('mav_compute_spectrum_at_ms'),
-        _computeBandsAtMs = lib.lookupFunction<_ComputeBandsAtMsNative,
-            _ComputeBandsAtMsDart>('mav_compute_compressed_bands_at_ms');
+    : _createFft = lib.lookupFunction<_CreateFftNative, _CreateFftDart>(
+        'mav_create_fft',
+      ),
+      _disposeFft = lib.lookupFunction<_DisposeFftNative, _DisposeFftDart>(
+        'mav_dispose_fft',
+      ),
+      _loadAudioFile = lib
+          .lookupFunction<_LoadAudioFileNative, _LoadAudioFileDart>(
+            'mav_load_audio_file',
+          ),
+      _openAudioForPlayback = lib
+          .lookupFunction<
+            _OpenAudioForPlaybackNative,
+            _OpenAudioForPlaybackDart
+          >('mav_open_audio_for_playback'),
+      _playerPlay = lib.lookupFunction<_PlayerPlayNative, _PlayerPlayDart>(
+        'mav_player_play',
+      ),
+      _playerPause = lib.lookupFunction<_PlayerPauseNative, _PlayerPauseDart>(
+        'mav_player_pause',
+      ),
+      _playerSeekMs = lib
+          .lookupFunction<_PlayerSeekMsNative, _PlayerSeekMsDart>(
+            'mav_player_seek_ms',
+          ),
+      _playerGetPositionMs = lib
+          .lookupFunction<_PlayerGetPositionMsNative, _PlayerGetPositionMsDart>(
+            'mav_player_get_position_ms',
+          ),
+      _playerIsPlaying = lib
+          .lookupFunction<_PlayerIsPlayingNative, _PlayerIsPlayingDart>(
+            'mav_player_is_playing',
+          ),
+      _setVolume = lib.lookupFunction<_SetVolumeNative, _SetVolumeDart>(
+        'mav_player_set_volume',
+      ),
+      _getDurationMs = lib.lookupFunction<_GetDurationNative, _GetDurationDart>(
+        'mav_get_audio_duration_ms',
+      ),
+      _computeSpectrumAtMs = lib
+          .lookupFunction<_ComputeSpectrumAtMsNative, _ComputeSpectrumAtMsDart>(
+            'mav_compute_spectrum_at_ms',
+          ),
+      _computeBandsAtMs = lib
+          .lookupFunction<_ComputeBandsAtMsNative, _ComputeBandsAtMsDart>(
+            'mav_compute_compressed_bands_at_ms',
+          );
   final _CreateFftDart _createFft;
   final _DisposeFftDart _disposeFft;
   final _LoadAudioFileDart _loadAudioFile;
@@ -97,18 +108,25 @@ class MavNative {
   final _ComputeSpectrumAtMsDart _computeSpectrumAtMs;
   final _ComputeBandsAtMsDart _computeBandsAtMs;
 
+  /// Opens platform dynamic library and returns an FFI binding instance.
   static MavNative open() {
     if (Platform.isWindows) {
-      return MavNative._(DynamicLibrary.open('audio_visualizer_player_plugin.dll'));
+      return MavNative._(
+        DynamicLibrary.open('audio_visualizer_player_plugin.dll'),
+      );
     }
     if (Platform.isAndroid) {
-      return MavNative._(DynamicLibrary.open('libaudio_visualizer_player_plugin.so'));
+      return MavNative._(
+        DynamicLibrary.open('libaudio_visualizer_player_plugin.so'),
+      );
     }
     throw UnsupportedError('Only Android and Windows are supported.');
   }
 
+  /// Creates FFT context with the provided [fftSize].
   int createFft(int fftSize) => _createFft(fftSize);
 
+  /// Loads an audio file for analysis.
   int loadAudioFile(String filePath) {
     final nativePath = filePath.toNativeUtf8();
     try {
@@ -118,6 +136,7 @@ class MavNative {
     }
   }
 
+  /// Opens an audio file for playback.
   int openAudioForPlayback(String filePath) {
     final nativePath = filePath.toNativeUtf8();
     try {
@@ -127,20 +146,30 @@ class MavNative {
     }
   }
 
+  /// Starts playback.
   int playerPlay() => _playerPlay();
 
+  /// Pauses playback.
   int playerPause() => _playerPause();
 
+  /// Seeks playback position in milliseconds.
   int playerSeekMs(int positionMs) => _playerSeekMs(positionMs);
 
+  /// Returns current playback position in milliseconds.
   int playerGetPositionMs() => _playerGetPositionMs();
 
+  /// Returns whether native player is currently playing.
   bool playerIsPlaying() => _playerIsPlaying() == 1;
 
+  /// Sets output volume in range `0..1`.
   int playerSetVolume(double volume) => _setVolume(volume);
 
+  /// Returns current audio duration in milliseconds.
   int getDurationMs() => _getDurationMs();
 
+  /// Returns full spectrum magnitudes at [positionMs].
+  ///
+  /// [outCount] controls requested result length.
   List<double> getSpectrumAtMs({
     required int positionMs,
     required int outCount,
@@ -158,6 +187,9 @@ class MavNative {
     }
   }
 
+  /// Returns compressed normalized bands at [positionMs].
+  ///
+  /// [bandCount] controls requested output length.
   List<double> getCompressedBandsAtMs({
     required int positionMs,
     required int bandCount,
@@ -178,5 +210,6 @@ class MavNative {
     }
   }
 
+  /// Releases native FFT resources.
   void dispose() => _disposeFft();
 }

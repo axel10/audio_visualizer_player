@@ -65,7 +65,7 @@ packages:
     source: hosted
     version: "1.19.1"
   cross_file:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: cross_file
       sha256: "28bb3ae56f117b5aec029d702a90f57d285cd975c3c5c281eaca38dbc47c5937"
@@ -97,7 +97,7 @@ packages:
     source: hosted
     version: "0.7.12"
   desktop_drop:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: desktop_drop
       sha256: "927511f590ce01ee90d0d80f79bc71b9c919d8522d01e495e89a00c6f4a4fb5b"

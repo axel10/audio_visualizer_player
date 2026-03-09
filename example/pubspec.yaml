@@ -20,6 +20,8 @@ dependencies:
   audio_visualizer_player:
     path: ../
 
+  cross_file: ^0.3.4+2
+  desktop_drop: ^0.6.1
   file_picker: ^10.3.2
   cupertino_icons: ^1.0.8
 

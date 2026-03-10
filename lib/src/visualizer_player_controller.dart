@@ -1633,7 +1633,9 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     if (framePeak <= 1e-9) {
       return out;
     }
-    final ref = framePeak;
+    // Absolute normalization reference to avoid boosting very quiet frames.
+    // Using fftSize/2 keeps "quiet" content visually quiet.
+    final ref = (fftSize / 2.0).clamp(1.0, double.infinity);
     final noiseFloorDb = normalizationFloorDb.clamp(-120.0, -10.0);
     final invRange = 1.0 / -noiseFloorDb;
 

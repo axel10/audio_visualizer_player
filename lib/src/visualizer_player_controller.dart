@@ -166,6 +166,8 @@ class VisualizerOptimizationOptions {
     this.targetFrameRate = 60.0,
     // 1.0 keeps original contrast; >1.0 increases per-group separation.
     this.groupContrastExponent = 1.35,
+    // Final output multiplier applied to optimized values.
+    this.overallMultiplier = 1.0,
   });
 
   /// Temporal smoothing factor in range `0..1` (higher = smoother).
@@ -227,6 +229,12 @@ class VisualizerOptimizationOptions {
   /// Typical range: `1.1..2.0`.
   final double groupContrastExponent;
 
+  /// Final multiplier applied to optimized output values.
+  ///
+  /// Use this to scale the visual amplitude without changing dynamics.
+  /// Typical range: `0.5..3.0`.
+  final double overallMultiplier;
+
   VisualizerOptimizationOptions copyWith({
     double? smoothingCoefficient,
     double? gravityCoefficient,
@@ -237,6 +245,7 @@ class VisualizerOptimizationOptions {
     int? skipHighFrequencyGroups,
     double? targetFrameRate,
     double? groupContrastExponent,
+    double? overallMultiplier,
   }) => VisualizerOptimizationOptions(
     smoothingCoefficient: smoothingCoefficient ?? this.smoothingCoefficient,
     gravityCoefficient: gravityCoefficient ?? this.gravityCoefficient,
@@ -249,6 +258,7 @@ class VisualizerOptimizationOptions {
     targetFrameRate: targetFrameRate ?? this.targetFrameRate,
     groupContrastExponent:
         groupContrastExponent ?? this.groupContrastExponent,
+    overallMultiplier: overallMultiplier ?? this.overallMultiplier,
   );
 }
 
@@ -1312,9 +1322,10 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
       analysisMicros,
     );
     final t = analysisMicros == 0 ? 1.0 : _interpMicros / analysisMicros;
+    final outputMultiplier = visualOptions.overallMultiplier;
     _latestOptimizedFft = List<double>.generate(
       visualOptions.frequencyGroups,
-      (i) => _lerp(_interpFrom[i], _interpTo[i], t),
+      (i) => _lerp(_interpFrom[i], _interpTo[i], t) * outputMultiplier,
     );
     _emitOptimizedFftFrame();
   }

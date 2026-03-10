@@ -17,6 +17,7 @@
 #include <wrl/client.h>
 #include <shlwapi.h>
 #include <audioclient.h>
+#include <propvarutil.h>
 
 using Microsoft::WRL::ComPtr;
 
@@ -44,6 +45,15 @@ static int32_t g_smoothed_band_count = 0;
 // Player state
 static ComPtr<IMFMediaEngine> g_media_engine = nullptr;
 static ComPtr<IMFMediaEngineClassFactory> g_engine_factory = nullptr;
+
+// Analysis (streaming) state
+static ComPtr<IMFSourceReader> g_analysis_reader = nullptr;
+static uint32_t g_analysis_channels = 0;
+static uint32_t g_analysis_sample_rate = 0;
+static uint64_t g_analysis_duration_ms = 0;
+static std::vector<float> g_stream_cache;
+static uint64_t g_cache_start_frame = 0;
+static uint64_t g_cache_frame_count = 0;
 
 class MediaEngineNotify : public IMFMediaEngineNotify {
 public:
@@ -77,6 +87,11 @@ extern "C" {
 
 void* pffft_aligned_malloc(size_t nb_bytes) {
 #ifdef _WIN32
+    fprintf(stderr, "mav: pffft_aligned_malloc nb_bytes=%zu\n", nb_bytes);
+#else
+    fprintf(stderr, "mav: pffft_aligned_malloc nb_bytes=%zu\n", nb_bytes);
+#endif
+#ifdef _WIN32
     return _aligned_malloc(nb_bytes, 64);
 #else
     void* ptr = nullptr;
@@ -87,6 +102,11 @@ void* pffft_aligned_malloc(size_t nb_bytes) {
 
 void pffft_aligned_free(void* ptr) {
 #ifdef _WIN32
+    fprintf(stderr, "mav: pffft_aligned_free ptr=%p\n", ptr);
+#else
+    fprintf(stderr, "mav: pffft_aligned_free ptr=%p\n", ptr);
+#endif
+#ifdef _WIN32
     _aligned_free(ptr);
 #else
     free(ptr);
@@ -94,6 +114,7 @@ void pffft_aligned_free(void* ptr) {
 }
 
 static void mav_release_audio_buffer(void) {
+    fprintf(stderr, "mav: mav_release_audio_buffer\n");
     if (g_audio_samples != nullptr) {
         free(g_audio_samples);
         g_audio_samples = nullptr;
@@ -102,7 +123,26 @@ static void mav_release_audio_buffer(void) {
     g_audio_sample_rate = 0;
 }
 
+static void mav_release_stream_cache(void) {
+#ifdef _WIN32
+    g_stream_cache.clear();
+    g_cache_start_frame = 0;
+    g_cache_frame_count = 0;
+#endif
+}
+
+static void mav_release_analysis_reader(void) {
+#ifdef _WIN32
+    g_analysis_reader.Reset();
+    g_analysis_channels = 0;
+    g_analysis_sample_rate = 0;
+    g_analysis_duration_ms = 0;
+    mav_release_stream_cache();
+#endif
+}
+
 static void mav_release_smoothed_bands(void) {
+    fprintf(stderr, "mav: mav_release_smoothed_bands\n");
     if (g_smoothed_bands != nullptr) {
         free(g_smoothed_bands);
         g_smoothed_bands = nullptr;
@@ -111,6 +151,7 @@ static void mav_release_smoothed_bands(void) {
 }
 
 MAV_EXPORT int32_t mav_create_fft(int32_t fft_size) {
+    fprintf(stderr, "mav: mav_create_fft fft_size=%d\n", fft_size);
     if (fft_size <= 0 || !pffft_is_valid_size(fft_size, PFFFT_REAL)) return -1;
     if (g_fft_setup != nullptr) {
         pffft_destroy_setup(g_fft_setup);
@@ -124,6 +165,7 @@ MAV_EXPORT int32_t mav_create_fft(int32_t fft_size) {
 }
 
 MAV_EXPORT void mav_dispose_fft(void) {
+    fprintf(stderr, "mav: mav_dispose_fft\n");
     mav_release_audio_buffer();
     mav_release_smoothed_bands();
     if (g_fft_setup != nullptr) {
@@ -134,13 +176,18 @@ MAV_EXPORT void mav_dispose_fft(void) {
 #ifdef _WIN32
     g_media_engine.Reset();
     g_engine_factory.Reset();
+    mav_release_analysis_reader();
 #endif
 }
 
 MAV_EXPORT int32_t mav_load_audio_file(const char* file_path) {
+    fprintf(stderr, "mav: mav_load_audio_file file_path=%s\n", (file_path?file_path:"(null)"));
     if (file_path == nullptr || file_path[0] == '\0') return -1;
 #ifdef _WIN32
     if (FAILED(EnsureMFInit())) return -100;
+
+    mav_release_audio_buffer();
+    mav_release_analysis_reader();
 
     int wide_len = MultiByteToWideChar(CP_UTF8, 0, file_path, -1, nullptr, 0);
     std::vector<wchar_t> wide_path(wide_len);
@@ -167,39 +214,20 @@ MAV_EXPORT int32_t mav_load_audio_file(const char* file_path) {
 
     if (channels == 0 || sample_rate == 0) return -103;
 
-    std::vector<float> all_samples;
-    while (true) {
-        DWORD flags = 0;
-        ComPtr<IMFSample> sample;
-        hr = reader->ReadSample((DWORD)MF_SOURCE_READER_FIRST_AUDIO_STREAM, 0, nullptr, &flags, nullptr, &sample);
-        if (FAILED(hr) || (flags & MF_SOURCE_READERF_ENDOFSTREAM)) break;
-        if (!sample) continue;
-
-        ComPtr<IMFMediaBuffer> buffer;
-        hr = sample->ConvertToContiguousBuffer(&buffer);
-        if (FAILED(hr)) continue;
-        BYTE* data = nullptr;
-        DWORD len = 0;
-        hr = buffer->Lock(&data, nullptr, &len);
-        if (SUCCEEDED(hr)) {
-            float* f_data = (float*)data;
-            size_t count = len / sizeof(float);
-            for (size_t i = 0; i < count; i += channels) {
-                float mixed = 0;
-                for (size_t c = 0; c < channels && (i + c) < count; c++) mixed += f_data[i + c];
-                all_samples.push_back(mixed / (float)channels);
-            }
-            buffer->Unlock();
-        }
+    PROPVARIANT var;
+    PropVariantInit(&var);
+    hr = reader->GetPresentationAttribute(MF_SOURCE_READER_MEDIASOURCE, MF_PD_DURATION, &var);
+    if (SUCCEEDED(hr) && var.vt == VT_UI8) {
+        g_analysis_duration_ms = (uint64_t)(var.uhVal.QuadPart / 10000ULL);
+    } else {
+        g_analysis_duration_ms = 0;
     }
+    PropVariantClear(&var);
 
-    mav_release_audio_buffer();
-    if (all_samples.size() > 0) {
-        g_audio_samples = (float*)malloc(all_samples.size() * sizeof(float));
-        memcpy(g_audio_samples, all_samples.data(), all_samples.size() * sizeof(float));
-    }
-    g_audio_frame_count = all_samples.size();
-    g_audio_sample_rate = sample_rate;
+    g_analysis_reader = reader;
+    g_analysis_channels = channels;
+    g_analysis_sample_rate = sample_rate;
+    mav_release_stream_cache();
     return 0;
 #else
     return -999;
@@ -209,8 +237,8 @@ MAV_EXPORT int32_t mav_load_audio_file(const char* file_path) {
 MAV_EXPORT int32_t mav_open_audio_for_playback(const char* file_path) {
 #ifdef _WIN32
 
-    fprintf(stderr, "mav_open_audio_for_playback executing\n");
-    fprintf(stderr, "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+    fprintf(stderr, "mav: mav_open_audio_for_playback file_path=%s\n", (file_path?file_path:"(null)"));
+    fprintf(stderr, "mav: mav_open_audio_for_playback start\n");
     if (FAILED(EnsureMFInit())) return -200;
     
     if (g_media_engine.Get()) {
@@ -238,7 +266,7 @@ MAV_EXPORT int32_t mav_open_audio_for_playback(const char* file_path) {
     BSTR bstr_url = SysAllocString(wide_path.data());
     hr = g_media_engine->SetSource(bstr_url);
     SysFreeString(bstr_url);
-    
+    fprintf(stderr, "mav: mav_open_audio_for_playback SetSource hr=0x%08x\n", (unsigned)hr);
     return SUCCEEDED(hr) ? 0 : -203;
 #else
     return -999;
@@ -247,6 +275,7 @@ MAV_EXPORT int32_t mav_open_audio_for_playback(const char* file_path) {
 
 MAV_EXPORT int32_t mav_player_play(void) {
 #ifdef _WIN32
+    fprintf(stderr, "mav: mav_player_play\n");
     if (!g_media_engine.Get()) return -1;
     return SUCCEEDED(g_media_engine->Play()) ? 0 : -1;
 #else
@@ -256,6 +285,7 @@ MAV_EXPORT int32_t mav_player_play(void) {
 
 MAV_EXPORT int32_t mav_player_pause(void) {
 #ifdef _WIN32
+    fprintf(stderr, "mav: mav_player_pause\n");
     if (!g_media_engine.Get()) return -1;
     return SUCCEEDED(g_media_engine->Pause()) ? 0 : -1;
 #else
@@ -265,6 +295,7 @@ MAV_EXPORT int32_t mav_player_pause(void) {
 
 MAV_EXPORT int32_t mav_player_seek_ms(int32_t position_ms) {
 #ifdef _WIN32
+    fprintf(stderr, "mav: mav_player_seek_ms position_ms=%d\n", position_ms);
     if (!g_media_engine.Get()) return -1;
     return SUCCEEDED(g_media_engine->SetCurrentTime((double)position_ms / 1000.0)) ? 0 : -1;
 #else
@@ -274,6 +305,7 @@ MAV_EXPORT int32_t mav_player_seek_ms(int32_t position_ms) {
 
 MAV_EXPORT int32_t mav_player_get_position_ms(void) {
 #ifdef _WIN32
+    fprintf(stderr, "mav: mav_player_get_position_ms\n");
     if (!g_media_engine.Get()) return 0;
     return (int32_t)(g_media_engine->GetCurrentTime() * 1000.0);
 #else
@@ -283,6 +315,7 @@ MAV_EXPORT int32_t mav_player_get_position_ms(void) {
 
 MAV_EXPORT int32_t mav_player_is_playing(void) {
 #ifdef _WIN32
+    fprintf(stderr, "mav: mav_player_is_playing\n");
     if (!g_media_engine.Get()) return 0;
     bool paused = g_media_engine->IsPaused();
     return !paused ? 1 : 0;
@@ -293,6 +326,7 @@ MAV_EXPORT int32_t mav_player_is_playing(void) {
 
 MAV_EXPORT int32_t mav_player_set_volume(float volume) {
 #ifdef _WIN32
+    fprintf(stderr, "mav: mav_player_set_volume volume=%f\n", volume);
     if (!g_media_engine.Get()) return -1;
     double vol = (double)((volume < 0.0f) ? 0.0f : (volume > 1.0f ? 1.0f : volume));
     return SUCCEEDED(g_media_engine->SetVolume(vol)) ? 0 : -1;
@@ -303,21 +337,28 @@ MAV_EXPORT int32_t mav_player_set_volume(float volume) {
 
 MAV_EXPORT void mav_unload_audio_file(void) {
 #ifdef _WIN32
+    fprintf(stderr, "mav: mav_unload_audio_file\n");
     if (g_media_engine.Get()) {
         g_media_engine->Pause();
         g_media_engine.Reset();
     }
 #endif
     mav_release_audio_buffer();
+    mav_release_analysis_reader();
     mav_release_smoothed_bands();
 }
 
 MAV_EXPORT int32_t mav_get_audio_duration_ms(void) {
+    fprintf(stderr, "mav: mav_get_audio_duration_ms\n");
+#ifdef _WIN32
+    if (g_analysis_duration_ms > 0) return (int32_t)g_analysis_duration_ms;
+#endif
     if (g_audio_samples == nullptr || g_audio_sample_rate == 0) return 0;
     return (int32_t)((g_audio_frame_count * 1000ULL) / g_audio_sample_rate);
 }
 
 static int32_t mav_compute_spectrum_internal(const float* input_samples, int32_t sample_count, float* out_magnitudes, int32_t out_count) {
+    fprintf(stderr, "mav: mav_compute_spectrum_internal sample_count=%d out_count=%d\n", sample_count, out_count);
     if (g_fft_setup == nullptr || g_fft_size <= 0) return -1;
     float* fft_in = (float*)pffft_aligned_malloc((size_t)g_fft_size * sizeof(float));
     float* fft_out = (float*)pffft_aligned_malloc((size_t)g_fft_size * sizeof(float));
@@ -342,6 +383,90 @@ static int32_t mav_compute_spectrum_internal(const float* input_samples, int32_t
 }
 
 MAV_EXPORT int32_t mav_compute_spectrum_at_ms(int32_t position_ms, float* out_magnitudes, int32_t out_count) {
+    fprintf(stderr, "mav: mav_compute_spectrum_at_ms position_ms=%d out_count=%d\n", position_ms, out_count);
+#ifdef _WIN32
+    if (!g_analysis_reader.Get() || g_analysis_sample_rate == 0 || g_analysis_channels == 0 || g_fft_size <= 0) return -10;
+
+    uint64_t center = ((uint64_t)position_ms * g_analysis_sample_rate) / 1000ULL;
+    int64_t start = (int64_t)center - (g_fft_size / 2);
+    uint64_t start_frame = (start < 0) ? 0 : (uint64_t)start;
+    uint64_t needed_frames = (start < 0) ? (uint64_t)(g_fft_size + start) : (uint64_t)g_fft_size;
+
+    if (needed_frames > 0) {
+        uint64_t cache_end = g_cache_start_frame + g_cache_frame_count;
+        bool cache_ok = (g_cache_frame_count > 0 &&
+            start_frame >= g_cache_start_frame &&
+            (start_frame + needed_frames) <= cache_end);
+
+        if (!cache_ok) {
+            g_stream_cache.clear();
+            g_cache_start_frame = start_frame;
+            g_cache_frame_count = 0;
+
+            PROPVARIANT var;
+            PropVariantInit(&var);
+            var.vt = VT_I8;
+            uint64_t pos_100ns = (start_frame * 10000000ULL) / (uint64_t)g_analysis_sample_rate;
+            var.hVal.QuadPart = (LONGLONG)pos_100ns;
+            HRESULT hr_seek = g_analysis_reader->SetCurrentPosition(GUID_NULL, var);
+            PropVariantClear(&var);
+            if (FAILED(hr_seek)) return -11;
+
+            while (g_cache_frame_count < needed_frames) {
+                DWORD flags = 0;
+                ComPtr<IMFSample> sample;
+                HRESULT hr = g_analysis_reader->ReadSample((DWORD)MF_SOURCE_READER_FIRST_AUDIO_STREAM, 0, nullptr, &flags, nullptr, &sample);
+                if (FAILED(hr) || (flags & MF_SOURCE_READERF_ENDOFSTREAM)) break;
+                if (!sample) continue;
+
+                ComPtr<IMFMediaBuffer> buffer;
+                hr = sample->ConvertToContiguousBuffer(&buffer);
+                if (FAILED(hr)) continue;
+                BYTE* data = nullptr;
+                DWORD len = 0;
+                hr = buffer->Lock(&data, nullptr, &len);
+                if (SUCCEEDED(hr)) {
+                    float* f_data = (float*)data;
+                    size_t total_floats = len / sizeof(float);
+                    size_t total_frames = total_floats / g_analysis_channels;
+                    size_t frames_to_copy = total_frames;
+                    if (g_cache_frame_count + frames_to_copy > needed_frames) {
+                        frames_to_copy = (size_t)(needed_frames - g_cache_frame_count);
+                    }
+                    size_t floats_to_copy = frames_to_copy * g_analysis_channels;
+                    g_stream_cache.insert(g_stream_cache.end(), f_data, f_data + floats_to_copy);
+                    g_cache_frame_count += frames_to_copy;
+                    buffer->Unlock();
+                }
+            }
+        }
+    }
+
+    float* frame = (float*)pffft_aligned_malloc((size_t)g_fft_size * sizeof(float));
+    for (int32_t i = 0; i < g_fft_size; ++i) {
+        int64_t index = start + i;
+        if (index < 0) {
+            frame[i] = 0.0f;
+            continue;
+        }
+        uint64_t uindex = (uint64_t)index;
+        if (uindex < g_cache_start_frame || uindex >= (g_cache_start_frame + g_cache_frame_count)) {
+            frame[i] = 0.0f;
+            continue;
+        }
+        uint64_t local = uindex - g_cache_start_frame;
+        uint64_t base = local * g_analysis_channels;
+        float mixed = 0.0f;
+        for (uint32_t c = 0; c < g_analysis_channels; ++c) {
+            mixed += g_stream_cache[base + c];
+        }
+        frame[i] = mixed / (float)g_analysis_channels;
+    }
+
+    int32_t result = mav_compute_spectrum_internal(frame, g_fft_size, out_magnitudes, out_count);
+    pffft_aligned_free(frame);
+    return result;
+#else
     if (g_audio_samples == nullptr || g_audio_sample_rate == 0 || g_fft_size <= 0) return -10;
     float* frame = (float*)pffft_aligned_malloc((size_t)g_fft_size * sizeof(float));
     uint64_t center = ((uint64_t)position_ms * g_audio_sample_rate) / 1000ULL;
@@ -353,9 +478,11 @@ MAV_EXPORT int32_t mav_compute_spectrum_at_ms(int32_t position_ms, float* out_ma
     int32_t result = mav_compute_spectrum_internal(frame, g_fft_size, out_magnitudes, out_count);
     pffft_aligned_free(frame);
     return result;
+#endif
 }
 
 MAV_EXPORT int32_t mav_compute_compressed_bands_at_ms(int32_t position_ms, float* out_bands, int32_t band_count) {
+    fprintf(stderr, "mav: mav_compute_compressed_bands_at_ms position_ms=%d band_count=%d\n", position_ms, band_count);
     if (out_bands == nullptr || band_count <= 0 || g_fft_size <= 0) return -20;
     int32_t nyquist_bins = g_fft_size / 2;
     std::vector<float> magnitudes(nyquist_bins);
@@ -394,6 +521,7 @@ MAV_EXPORT int32_t mav_compute_compressed_bands_at_ms(int32_t position_ms, float
 }
 
 MAV_EXPORT int32_t mav_fill_test_signal(float* out_samples, int32_t sample_count, float phase_step) {
+    fprintf(stderr, "mav: mav_fill_test_signal sample_count=%d phase_step=%f\n", sample_count, phase_step);
     if (out_samples == nullptr || sample_count <= 0) return -1;
     float phase = 0.0f;
     for (int32_t i = 0; i < sample_count; ++i) {
@@ -404,9 +532,14 @@ MAV_EXPORT int32_t mav_fill_test_signal(float* out_samples, int32_t sample_count
 }
 
 MAV_EXPORT int32_t mav_compute_spectrum(const float* input_samples, int32_t sample_count, float* out_magnitudes, int32_t out_count) {
+    fprintf(stderr, "mav: mav_compute_spectrum sample_count=%d out_count=%d\n", sample_count, out_count);
     return mav_compute_spectrum_internal(input_samples, sample_count, out_magnitudes, out_count);
 }
 
-MAV_EXPORT int32_t mav_simd_width(void) { return pffft_simd_size(); }
+MAV_EXPORT int32_t mav_simd_width(void) { 
+    int32_t w = pffft_simd_size();
+    fprintf(stderr, "mav: mav_simd_width -> %d\n", w);
+    return w;
+}
 
 } // extern "C"

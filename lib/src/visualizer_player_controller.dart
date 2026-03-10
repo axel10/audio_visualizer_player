@@ -96,6 +96,54 @@ class PlaylistState {
   final AudioTrack? currentTrack;
 }
 
+/// Equalizer band descriptor.
+class EqualizerBand {
+  const EqualizerBand({
+    required this.index,
+    required this.centerHz,
+    required this.minDb,
+    required this.maxDb,
+    required this.gainDb,
+  });
+
+  final int index;
+  final double centerHz;
+  final double minDb;
+  final double maxDb;
+  final double gainDb;
+
+  EqualizerBand copyWith({double? gainDb}) => EqualizerBand(
+    index: index,
+    centerHz: centerHz,
+    minDb: minDb,
+    maxDb: maxDb,
+    gainDb: gainDb ?? this.gainDb,
+  );
+}
+
+/// Android-only AudioFx runtime snapshot.
+class AndroidAudioFxState {
+  const AndroidAudioFxState({
+    required this.virtualizerSupported,
+    required this.virtualizerStrength,
+    required this.loudnessEnhancerSupported,
+    required this.loudnessGainDb,
+    required this.eqPresets,
+    required this.currentEqPreset,
+    required this.presetReverbSupported,
+    required this.presetReverbPreset,
+  });
+
+  final bool virtualizerSupported;
+  final double virtualizerStrength;
+  final bool loudnessEnhancerSupported;
+  final double loudnessGainDb;
+  final List<String> eqPresets;
+  final int currentEqPreset;
+  final bool presetReverbSupported;
+  final int presetReverbPreset;
+}
+
 /// Aggregation strategy used when compressing FFT bins into visual groups.
 enum FftAggregationMode { peak, mean, rms }
 
@@ -113,6 +161,8 @@ class VisualizerOptimizationOptions {
     this.aggregationMode = FftAggregationMode.peak,
     // Number of output bars.
     this.frequencyGroups = 32,
+    // Number of high frequency groups to skip.
+    this.skipHighFrequencyGroups = 0,
     this.targetFrameRate = 60.0,
     // 1.0 keeps original contrast; >1.0 increases per-group separation.
     this.groupContrastExponent = 1.35,
@@ -156,6 +206,12 @@ class VisualizerOptimizationOptions {
   /// Typical range: `24..96`.
   final int frequencyGroups;
 
+  /// Number of high frequency groups to skip from the visual output.
+  ///
+  /// Use this to remove the far right bars that often contain very little energy
+  /// or are outside the audible/interesting range for visualization.
+  final int skipHighFrequencyGroups;
+
   /// Target visual frame rate for interpolated output.
   ///
   /// Typical range: `30..120`.
@@ -170,6 +226,30 @@ class VisualizerOptimizationOptions {
   ///
   /// Typical range: `1.1..2.0`.
   final double groupContrastExponent;
+
+  VisualizerOptimizationOptions copyWith({
+    double? smoothingCoefficient,
+    double? gravityCoefficient,
+    double? logarithmicScale,
+    double? normalizationFloorDb,
+    FftAggregationMode? aggregationMode,
+    int? frequencyGroups,
+    int? skipHighFrequencyGroups,
+    double? targetFrameRate,
+    double? groupContrastExponent,
+  }) => VisualizerOptimizationOptions(
+    smoothingCoefficient: smoothingCoefficient ?? this.smoothingCoefficient,
+    gravityCoefficient: gravityCoefficient ?? this.gravityCoefficient,
+    logarithmicScale: logarithmicScale ?? this.logarithmicScale,
+    normalizationFloorDb: normalizationFloorDb ?? this.normalizationFloorDb,
+    aggregationMode: aggregationMode ?? this.aggregationMode,
+    frequencyGroups: frequencyGroups ?? this.frequencyGroups,
+    skipHighFrequencyGroups:
+        skipHighFrequencyGroups ?? this.skipHighFrequencyGroups,
+    targetFrameRate: targetFrameRate ?? this.targetFrameRate,
+    groupContrastExponent:
+        groupContrastExponent ?? this.groupContrastExponent,
+  );
 }
 
 /// High-level controller for audio playback, playlist management, and FFT data.
@@ -180,20 +260,22 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   AudioVisualizerPlayerController({
     this.fftSize = 1024,
     this.analysisFrequencyHz = 30.0,
-    this.visualOptions = const VisualizerOptimizationOptions(),
+    VisualizerOptimizationOptions visualOptions =
+        const VisualizerOptimizationOptions(),
   }) : assert(fftSize > 0),
        assert(analysisFrequencyHz > 0),
        assert(visualOptions.frequencyGroups > 0),
        assert(visualOptions.targetFrameRate > 0),
        assert(visualOptions.groupContrastExponent > 0) {
+    _visualOptions = visualOptions;
     _latestRawFft = const [];
     _latestOptimizedFft = List<double>.filled(
-      visualOptions.frequencyGroups,
+      _visualOptions.frequencyGroups,
       0.0,
     );
-    _optimizedState = List<double>.filled(visualOptions.frequencyGroups, 0.0);
-    _interpFrom = List<double>.filled(visualOptions.frequencyGroups, 0.0);
-    _interpTo = List<double>.filled(visualOptions.frequencyGroups, 0.0);
+    _optimizedState = List<double>.filled(_visualOptions.frequencyGroups, 0.0);
+    _interpFrom = List<double>.filled(_visualOptions.frequencyGroups, 0.0);
+    _interpTo = List<double>.filled(_visualOptions.frequencyGroups, 0.0);
   }
 
   static const MethodChannel _androidPlayerChannel = MethodChannel(
@@ -210,7 +292,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   final double analysisFrequencyHz;
 
   /// Output smoothing/grouping options for visualization.
-  final VisualizerOptimizationOptions visualOptions;
+  VisualizerOptimizationOptions get visualOptions => _visualOptions;
 
   MavNative? _native;
   StreamSubscription<dynamic>? _androidFftSub;
@@ -227,6 +309,20 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   Duration _position = Duration.zero;
   bool _isPlaying = false;
   double _volume = 1.0;
+  bool _equalizerEnabled = true;
+  double _bassBoostStrength = 0.0;
+  List<EqualizerBand> _equalizerBands = const <EqualizerBand>[];
+  bool _equalizerSupported = false;
+  int _windowsEqMaxBandCount = 0;
+  bool _androidVirtualizerSupported = false;
+  double _androidVirtualizerStrength = 0.0;
+  bool _androidLoudnessEnhancerSupported = false;
+  double _androidLoudnessGainDb = 0.0;
+  List<String> _androidEqPresets = const <String>[];
+  int _androidCurrentEqPreset = -1;
+  bool _androidPresetReverbSupported = false;
+  int _androidPresetReverbPreset = 0;
+  int _androidEqMaxBandCount = 30;
   final List<AudioTrack> _playlist = <AudioTrack>[];
   final List<int> _playOrder = <int>[];
   int? _currentIndex;
@@ -237,6 +333,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   bool _playlistInternalLoad = false;
   bool _autoTransitionInFlight = false;
   int _autoAdvanceSuppressedUntilMicros = 0;
+  late VisualizerOptimizationOptions _visualOptions;
 
   late List<double> _latestRawFft;
   late List<double> _latestOptimizedFft;
@@ -282,6 +379,37 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
 
   /// Output volume in range `0..1`.
   double get volume => _volume;
+
+  /// Whether equalizer processing is enabled.
+  bool get equalizerEnabled => _equalizerEnabled;
+
+  /// Bass boost strength in range `0..1`.
+  double get bassBoostStrength => _bassBoostStrength;
+
+  /// Available equalizer bands and current gains.
+  List<EqualizerBand> get equalizerBands =>
+      List<EqualizerBand>.unmodifiable(_equalizerBands);
+
+  /// Whether equalizer is supported on current platform/runtime.
+  bool get equalizerSupported => _equalizerSupported;
+
+  /// Max configurable EQ band count on Windows (`0` on non-Windows).
+  int get windowsEqMaxBandCount => _windowsEqMaxBandCount;
+
+  /// Android-only extended AudioFx state.
+  AndroidAudioFxState get androidAudioFxState => AndroidAudioFxState(
+    virtualizerSupported: _androidVirtualizerSupported,
+    virtualizerStrength: _androidVirtualizerStrength,
+    loudnessEnhancerSupported: _androidLoudnessEnhancerSupported,
+    loudnessGainDb: _androidLoudnessGainDb,
+    eqPresets: List<String>.unmodifiable(_androidEqPresets),
+    currentEqPreset: _androidCurrentEqPreset,
+    presetReverbSupported: _androidPresetReverbSupported,
+    presetReverbPreset: _androidPresetReverbPreset,
+  );
+
+  /// Max custom EQ bands supported by Android DSP path.
+  int get androidEqMaxBandCount => _androidEqMaxBandCount;
 
   /// Current playlist in logical order.
   List<AudioTrack> get playlist => List<AudioTrack>.unmodifiable(_playlist);
@@ -379,6 +507,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
           (i) => (event[i] as num).toDouble(),
         );
       });
+      await _refreshAndroidEqState();
     }
 
     _analysisTick = Timer.periodic(_analysisInterval, (_) => _onAnalysisTick());
@@ -448,6 +577,8 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
       return;
     }
     await _androidPlayerChannel.invokeMethod('setVolume', {'volume': _volume});
+    await _applyAndroidEqState();
+    await _refreshAndroidEqState();
     final durationMs = await _androidCallInt('getDurationMs');
     _selectedPath = path;
     _position = Duration.zero;
@@ -588,6 +719,72 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
         'volume': _volume,
       });
     }
+    notifyListeners();
+  }
+
+
+  /// Android-only: sets Virtualizer strength in range `0..1`.
+  Future<void> setAndroidVirtualizerStrength(double strength01) async {
+    if (!isAndroid) {
+      return;
+    }
+    final value = strength01.clamp(0.0, 1.0);
+    await _androidPlayerChannel.invokeMethod<int>(
+      'setAndroidVirtualizerStrength',
+      {'strength': value},
+    );
+    await _refreshAndroidEqState();
+    notifyListeners();
+  }
+
+  /// Android-only: sets LoudnessEnhancer gain in dB (`0..24` recommended).
+  Future<void> setAndroidLoudnessGainDb(double gainDb) async {
+    if (!isAndroid) {
+      return;
+    }
+    final value = gainDb.clamp(0.0, 24.0);
+    await _androidPlayerChannel.invokeMethod<int>('setAndroidLoudnessGainDb', {
+      'gainDb': value,
+    });
+    await _refreshAndroidEqState();
+    notifyListeners();
+  }
+
+  /// Android-only: sets system Equalizer preset by index.
+  Future<void> setAndroidEqPreset(int presetIndex) async {
+    if (!isAndroid) {
+      return;
+    }
+    await _androidPlayerChannel.invokeMethod<int>('setAndroidEqPreset', {
+      'preset': presetIndex,
+    });
+    await _refreshAndroidEqState();
+    notifyListeners();
+  }
+
+  /// Android-only: sets custom DSP EQ band count.
+  Future<void> setAndroidEqBandCount(int bandCount) async {
+    if (!isAndroid) {
+      return;
+    }
+    final target = bandCount.clamp(1, _androidEqMaxBandCount);
+    await _androidPlayerChannel.invokeMethod<int>('setAndroidEqBandCount', {
+      'bandCount': target,
+    });
+    await _refreshAndroidEqState();
+    notifyListeners();
+  }
+
+  /// Android-only: sets PresetReverb preset by index.
+  Future<void> setAndroidPresetReverbPreset(int preset) async {
+    if (!isAndroid) {
+      return;
+    }
+    await _androidPlayerChannel.invokeMethod<int>(
+      'setAndroidPresetReverbPreset',
+      {'preset': preset},
+    );
+    await _refreshAndroidEqState();
     notifyListeners();
   }
 
@@ -812,6 +1009,71 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     await seek(position);
   }
 
+  /// Applies visualization tuning options at runtime.
+  ///
+  /// This can be called while playback is running.
+  void updateVisualOptions(VisualizerOptimizationOptions options) {
+    assert(options.frequencyGroups > 0);
+    assert(options.targetFrameRate > 0);
+    assert(options.groupContrastExponent > 0);
+
+    final old = _visualOptions;
+    final groupsChanged = old.frequencyGroups != options.frequencyGroups;
+    final frameRateChanged =
+        (old.targetFrameRate - options.targetFrameRate).abs() > 1e-9;
+
+    _visualOptions = options;
+
+    if (groupsChanged) {
+      _latestOptimizedFft = _resampleFftState(
+        _latestOptimizedFft,
+        _visualOptions.frequencyGroups,
+      );
+      _optimizedState = _resampleFftState(
+        _optimizedState,
+        _visualOptions.frequencyGroups,
+      );
+      _interpFrom = List<double>.from(_latestOptimizedFft);
+      _interpTo = List<double>.from(_optimizedState);
+      _interpMicros = 0;
+      if (_needOptimizedCompute) {
+        _emitOptimizedFftFrame();
+      }
+    }
+
+    if (frameRateChanged && _initialized) {
+      _restartRenderTick();
+    }
+    notifyListeners();
+  }
+
+  /// Patches one or more visualization option fields at runtime.
+  void patchVisualOptions({
+    double? smoothingCoefficient,
+    double? gravityCoefficient,
+    double? logarithmicScale,
+    double? normalizationFloorDb,
+    FftAggregationMode? aggregationMode,
+    int? frequencyGroups,
+    int? skipHighFrequencyGroups,
+    double? targetFrameRate,
+    double? groupContrastExponent,
+  }) {
+    updateVisualOptions(
+      _visualOptions.copyWith(
+        smoothingCoefficient: smoothingCoefficient,
+        gravityCoefficient: gravityCoefficient,
+        logarithmicScale: logarithmicScale,
+        normalizationFloorDb: normalizationFloorDb,
+        aggregationMode: aggregationMode,
+        frequencyGroups: frequencyGroups,
+        skipHighFrequencyGroups: skipHighFrequencyGroups,
+        targetFrameRate: targetFrameRate,
+        groupContrastExponent: groupContrastExponent,
+      ),
+    );
+  }
+
   /// Sets repeat mode.
   Future<void> setRepeatMode(RepeatMode mode) async {
     _repeatMode = mode;
@@ -870,6 +1132,111 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     return value ?? 0;
   }
 
+  Future<void> _refreshAndroidEqState() async {
+    if (!isAndroid) {
+      return;
+    }
+    final raw = await _androidPlayerChannel
+        .invokeMethod<Map<dynamic, dynamic>?>('getEqState');
+    final map = raw == null
+        ? const <dynamic, dynamic>{}
+        : Map<dynamic, dynamic>.from(raw);
+    final supported = (map['supported'] as num?)?.toInt() == 1;
+    _equalizerSupported = supported;
+    if (!supported) {
+      _equalizerBands = const <EqualizerBand>[];
+      _androidVirtualizerSupported = false;
+      _androidVirtualizerStrength = 0.0;
+      _androidLoudnessEnhancerSupported = false;
+      _androidLoudnessGainDb = 0.0;
+      _androidEqPresets = const <String>[];
+      _androidCurrentEqPreset = -1;
+      _androidPresetReverbSupported = false;
+      _androidPresetReverbPreset = 0;
+      _androidEqMaxBandCount = 30;
+      return;
+    }
+    _equalizerEnabled = (map['enabled'] as num?)?.toInt() == 1;
+    _bassBoostStrength = ((map['bassBoostStrength'] as num?)?.toDouble() ?? 0.0)
+        .clamp(0.0, 1.0);
+    _androidVirtualizerSupported =
+        (map['virtualizerSupported'] as num?)?.toInt() == 1;
+    _androidVirtualizerStrength =
+        ((map['virtualizerStrength'] as num?)?.toDouble() ?? 0.0).clamp(
+          0.0,
+          1.0,
+        );
+    _androidLoudnessEnhancerSupported =
+        (map['loudnessEnhancerSupported'] as num?)?.toInt() == 1;
+    _androidLoudnessGainDb =
+        ((map['loudnessGainDb'] as num?)?.toDouble() ?? 0.0).clamp(0.0, 24.0);
+    _androidEqPresets = List<String>.from(
+      (map['eqPresets'] as List<dynamic>? ?? const <dynamic>[]).map(
+        (e) => e.toString(),
+      ),
+    );
+    _androidCurrentEqPreset = (map['currentEqPreset'] as num?)?.toInt() ?? -1;
+    _androidPresetReverbSupported =
+        (map['presetReverbSupported'] as num?)?.toInt() == 1;
+    _androidPresetReverbPreset =
+        (map['presetReverbPreset'] as num?)?.toInt() ?? 0;
+    _androidEqMaxBandCount = (map['maxBandCount'] as num?)?.toInt() ?? 30;
+    final bandsRaw = (map['bands'] as List<dynamic>? ?? const <dynamic>[]);
+    _equalizerBands = List<EqualizerBand>.generate(bandsRaw.length, (i) {
+      final b = Map<dynamic, dynamic>.from(
+        bandsRaw[i] as Map<dynamic, dynamic>,
+      );
+      return EqualizerBand(
+        index: (b['index'] as num?)?.toInt() ?? i,
+        centerHz: (b['centerHz'] as num?)?.toDouble() ?? 0.0,
+        minDb: (b['minDb'] as num?)?.toDouble() ?? -15.0,
+        maxDb: (b['maxDb'] as num?)?.toDouble() ?? 15.0,
+        gainDb: (b['gainDb'] as num?)?.toDouble() ?? 0.0,
+      );
+    });
+  }
+
+  Future<void> _applyAndroidEqState() async {
+    if (!isAndroid) {
+      return;
+    }
+    await _androidPlayerChannel.invokeMethod<int>('setEqEnabled', {
+      'enabled': _equalizerEnabled ? 1 : 0,
+    });
+    if (_equalizerBands.isNotEmpty) {
+      await _androidPlayerChannel.invokeMethod<int>('setAndroidEqBandCount', {
+        'bandCount': _equalizerBands.length,
+      });
+    }
+    for (final band in _equalizerBands) {
+      await _androidPlayerChannel.invokeMethod<int>('setEqBandGainDb', {
+        'band': band.index,
+        'gainDb': band.gainDb,
+      });
+    }
+    await _androidPlayerChannel.invokeMethod<int>('setBassBoostStrength', {
+      'strength': _bassBoostStrength,
+    });
+    await _androidPlayerChannel.invokeMethod<int>(
+      'setAndroidVirtualizerStrength',
+      {'strength': _androidVirtualizerStrength},
+    );
+    await _androidPlayerChannel.invokeMethod<int>('setAndroidLoudnessGainDb', {
+      'gainDb': _androidLoudnessGainDb,
+    });
+    if (_androidCurrentEqPreset >= 0) {
+      await _androidPlayerChannel.invokeMethod<int>('setAndroidEqPreset', {
+        'preset': _androidCurrentEqPreset,
+      });
+    }
+    if (_androidPresetReverbPreset > 0) {
+      await _androidPlayerChannel.invokeMethod<int>(
+        'setAndroidPresetReverbPreset',
+        {'preset': _androidPresetReverbPreset},
+      );
+    }
+  }
+
   Future<void> _onAnalysisTick() async {
     if (_selectedPath == null) {
       return;
@@ -913,6 +1280,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
       rawBins,
       visualOptions.frequencyGroups,
       visualOptions.aggregationMode,
+      visualOptions.skipHighFrequencyGroups,
     );
     final normalized = _normalizeAndScale(
       grouped,
@@ -949,6 +1317,41 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
       (i) => _lerp(_interpFrom[i], _interpTo[i], t),
     );
     _emitOptimizedFftFrame();
+  }
+
+  void _restartRenderTick() {
+    _renderTick?.cancel();
+    _renderTick = Timer.periodic(_renderInterval, (_) => _onRenderTick());
+  }
+
+  List<double> _resampleFftState(List<double> source, int targetLength) {
+    if (targetLength <= 0) {
+      return const <double>[];
+    }
+    if (source.isEmpty) {
+      return List<double>.filled(targetLength, 0.0);
+    }
+    if (source.length == targetLength) {
+      return List<double>.from(source);
+    }
+    if (targetLength == 1) {
+      return <double>[source.first];
+    }
+
+    final out = List<double>.filled(targetLength, 0.0);
+    final maxSrc = source.length - 1;
+    for (var i = 0; i < targetLength; i++) {
+      final pos = (i * maxSrc) / (targetLength - 1);
+      final left = pos.floor();
+      final right = pos.ceil().clamp(0, maxSrc);
+      if (left == right) {
+        out[i] = source[left];
+      } else {
+        final t = pos - left;
+        out[i] = _lerp(source[left], source[right], t);
+      }
+    }
+    return out;
   }
 
   Future<void> _pollPlaybackState() async {
@@ -1145,6 +1548,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     List<double> bins,
     int groups,
     FftAggregationMode aggregationMode,
+    int skipHighFrequencyGroups,
   ) {
     if (bins.isEmpty) {
       return List<double>.filled(groups, 0.0);
@@ -1157,23 +1561,24 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     }
 
     final out = List<double>.filled(groups, 0.0);
+    final totalGroups = (groups + skipHighFrequencyGroups).clamp(groups, 512);
     final binCount = bins.length;
 
-    final boundaries = List<int>.filled(groups + 1, 1);
+    final boundaries = List<int>.filled(totalGroups + 1, 1);
     boundaries[0] = 1;
-    boundaries[groups] = binCount;
-    for (var i = 1; i < groups; i++) {
-      final t = i / groups;
+    boundaries[totalGroups] = binCount;
+    for (var i = 1; i < totalGroups; i++) {
+      final t = i / totalGroups;
       boundaries[i] = (math.pow(binCount.toDouble(), t).toDouble() - 1.0)
           .round()
           .clamp(1, binCount - 1);
     }
-    for (var i = 1; i <= groups; i++) {
+    for (var i = 1; i <= totalGroups; i++) {
       if (boundaries[i] <= boundaries[i - 1]) {
         boundaries[i] = (boundaries[i - 1] + 1).clamp(1, binCount);
       }
     }
-    boundaries[groups] = binCount;
+    boundaries[totalGroups] = binCount;
 
     for (var g = 0; g < groups; g++) {
       final start = boundaries[g];
@@ -1305,12 +1710,12 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   void _resetFftState() {
     _latestRawFft = const [];
     _latestOptimizedFft = List<double>.filled(
-      visualOptions.frequencyGroups,
+      _visualOptions.frequencyGroups,
       0.0,
     );
-    _optimizedState = List<double>.filled(visualOptions.frequencyGroups, 0.0);
-    _interpFrom = List<double>.filled(visualOptions.frequencyGroups, 0.0);
-    _interpTo = List<double>.filled(visualOptions.frequencyGroups, 0.0);
+    _optimizedState = List<double>.filled(_visualOptions.frequencyGroups, 0.0);
+    _interpFrom = List<double>.filled(_visualOptions.frequencyGroups, 0.0);
+    _interpTo = List<double>.filled(_visualOptions.frequencyGroups, 0.0);
     _lastAnalysisMicros = 0;
     _interpMicros = 0;
   }

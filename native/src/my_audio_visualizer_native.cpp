@@ -208,6 +208,9 @@ MAV_EXPORT int32_t mav_load_audio_file(const char* file_path) {
 
 MAV_EXPORT int32_t mav_open_audio_for_playback(const char* file_path) {
 #ifdef _WIN32
+
+    fprintf(stderr, "mav_open_audio_for_playback executing\n");
+    fprintf(stderr, "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
     if (FAILED(EnsureMFInit())) return -200;
     
     if (g_media_engine.Get()) {

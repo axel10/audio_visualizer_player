@@ -96,54 +96,6 @@ class PlaylistState {
   final AudioTrack? currentTrack;
 }
 
-/// Equalizer band descriptor.
-class EqualizerBand {
-  const EqualizerBand({
-    required this.index,
-    required this.centerHz,
-    required this.minDb,
-    required this.maxDb,
-    required this.gainDb,
-  });
-
-  final int index;
-  final double centerHz;
-  final double minDb;
-  final double maxDb;
-  final double gainDb;
-
-  EqualizerBand copyWith({double? gainDb}) => EqualizerBand(
-    index: index,
-    centerHz: centerHz,
-    minDb: minDb,
-    maxDb: maxDb,
-    gainDb: gainDb ?? this.gainDb,
-  );
-}
-
-/// Android-only AudioFx runtime snapshot.
-class AndroidAudioFxState {
-  const AndroidAudioFxState({
-    required this.virtualizerSupported,
-    required this.virtualizerStrength,
-    required this.loudnessEnhancerSupported,
-    required this.loudnessGainDb,
-    required this.eqPresets,
-    required this.currentEqPreset,
-    required this.presetReverbSupported,
-    required this.presetReverbPreset,
-  });
-
-  final bool virtualizerSupported;
-  final double virtualizerStrength;
-  final bool loudnessEnhancerSupported;
-  final double loudnessGainDb;
-  final List<String> eqPresets;
-  final int currentEqPreset;
-  final bool presetReverbSupported;
-  final int presetReverbPreset;
-}
-
 /// Aggregation strategy used when compressing FFT bins into visual groups.
 enum FftAggregationMode { peak, mean, rms }
 
@@ -321,18 +273,13 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   double _volume = 1.0;
   bool _equalizerEnabled = true;
   double _bassBoostStrength = 0.0;
-  List<EqualizerBand> _equalizerBands = const <EqualizerBand>[];
   bool _equalizerSupported = false;
-  int _windowsEqMaxBandCount = 0;
   bool _androidVirtualizerSupported = false;
   double _androidVirtualizerStrength = 0.0;
   bool _androidLoudnessEnhancerSupported = false;
   double _androidLoudnessGainDb = 0.0;
-  List<String> _androidEqPresets = const <String>[];
-  int _androidCurrentEqPreset = -1;
   bool _androidPresetReverbSupported = false;
   int _androidPresetReverbPreset = 0;
-  int _androidEqMaxBandCount = 30;
   final List<AudioTrack> _playlist = <AudioTrack>[];
   final List<int> _playOrder = <int>[];
   int? _currentIndex;
@@ -396,30 +343,8 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   /// Bass boost strength in range `0..1`.
   double get bassBoostStrength => _bassBoostStrength;
 
-  /// Available equalizer bands and current gains.
-  List<EqualizerBand> get equalizerBands =>
-      List<EqualizerBand>.unmodifiable(_equalizerBands);
-
   /// Whether equalizer is supported on current platform/runtime.
   bool get equalizerSupported => _equalizerSupported;
-
-  /// Max configurable EQ band count on Windows (`0` on non-Windows).
-  int get windowsEqMaxBandCount => _windowsEqMaxBandCount;
-
-  /// Android-only extended AudioFx state.
-  AndroidAudioFxState get androidAudioFxState => AndroidAudioFxState(
-    virtualizerSupported: _androidVirtualizerSupported,
-    virtualizerStrength: _androidVirtualizerStrength,
-    loudnessEnhancerSupported: _androidLoudnessEnhancerSupported,
-    loudnessGainDb: _androidLoudnessGainDb,
-    eqPresets: List<String>.unmodifiable(_androidEqPresets),
-    currentEqPreset: _androidCurrentEqPreset,
-    presetReverbSupported: _androidPresetReverbSupported,
-    presetReverbPreset: _androidPresetReverbPreset,
-  );
-
-  /// Max custom EQ bands supported by Android DSP path.
-  int get androidEqMaxBandCount => _androidEqMaxBandCount;
 
   /// Current playlist in logical order.
   List<AudioTrack> get playlist => List<AudioTrack>.unmodifiable(_playlist);
@@ -517,7 +442,6 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
           (i) => (event[i] as num).toDouble(),
         );
       });
-      await _refreshAndroidEqState();
     }
 
     _analysisTick = Timer.periodic(_analysisInterval, (_) => _onAnalysisTick());
@@ -587,8 +511,6 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
       return;
     }
     await _androidPlayerChannel.invokeMethod('setVolume', {'volume': _volume});
-    await _applyAndroidEqState();
-    await _refreshAndroidEqState();
     final durationMs = await _androidCallInt('getDurationMs');
     _selectedPath = path;
     _position = Duration.zero;
@@ -733,70 +655,6 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   }
 
 
-  /// Android-only: sets Virtualizer strength in range `0..1`.
-  Future<void> setAndroidVirtualizerStrength(double strength01) async {
-    if (!isAndroid) {
-      return;
-    }
-    final value = strength01.clamp(0.0, 1.0);
-    await _androidPlayerChannel.invokeMethod<int>(
-      'setAndroidVirtualizerStrength',
-      {'strength': value},
-    );
-    await _refreshAndroidEqState();
-    notifyListeners();
-  }
-
-  /// Android-only: sets LoudnessEnhancer gain in dB (`0..24` recommended).
-  Future<void> setAndroidLoudnessGainDb(double gainDb) async {
-    if (!isAndroid) {
-      return;
-    }
-    final value = gainDb.clamp(0.0, 24.0);
-    await _androidPlayerChannel.invokeMethod<int>('setAndroidLoudnessGainDb', {
-      'gainDb': value,
-    });
-    await _refreshAndroidEqState();
-    notifyListeners();
-  }
-
-  /// Android-only: sets system Equalizer preset by index.
-  Future<void> setAndroidEqPreset(int presetIndex) async {
-    if (!isAndroid) {
-      return;
-    }
-    await _androidPlayerChannel.invokeMethod<int>('setAndroidEqPreset', {
-      'preset': presetIndex,
-    });
-    await _refreshAndroidEqState();
-    notifyListeners();
-  }
-
-  /// Android-only: sets custom DSP EQ band count.
-  Future<void> setAndroidEqBandCount(int bandCount) async {
-    if (!isAndroid) {
-      return;
-    }
-    final target = bandCount.clamp(1, _androidEqMaxBandCount);
-    await _androidPlayerChannel.invokeMethod<int>('setAndroidEqBandCount', {
-      'bandCount': target,
-    });
-    await _refreshAndroidEqState();
-    notifyListeners();
-  }
-
-  /// Android-only: sets PresetReverb preset by index.
-  Future<void> setAndroidPresetReverbPreset(int preset) async {
-    if (!isAndroid) {
-      return;
-    }
-    await _androidPlayerChannel.invokeMethod<int>(
-      'setAndroidPresetReverbPreset',
-      {'preset': preset},
-    );
-    await _refreshAndroidEqState();
-    notifyListeners();
-  }
 
   /// Replaces the playlist and selects [startIndex].
   ///
@@ -1140,111 +998,6 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   ]) async {
     final value = await _androidPlayerChannel.invokeMethod<int>(method, args);
     return value ?? 0;
-  }
-
-  Future<void> _refreshAndroidEqState() async {
-    if (!isAndroid) {
-      return;
-    }
-    final raw = await _androidPlayerChannel
-        .invokeMethod<Map<dynamic, dynamic>?>('getEqState');
-    final map = raw == null
-        ? const <dynamic, dynamic>{}
-        : Map<dynamic, dynamic>.from(raw);
-    final supported = (map['supported'] as num?)?.toInt() == 1;
-    _equalizerSupported = supported;
-    if (!supported) {
-      _equalizerBands = const <EqualizerBand>[];
-      _androidVirtualizerSupported = false;
-      _androidVirtualizerStrength = 0.0;
-      _androidLoudnessEnhancerSupported = false;
-      _androidLoudnessGainDb = 0.0;
-      _androidEqPresets = const <String>[];
-      _androidCurrentEqPreset = -1;
-      _androidPresetReverbSupported = false;
-      _androidPresetReverbPreset = 0;
-      _androidEqMaxBandCount = 30;
-      return;
-    }
-    _equalizerEnabled = (map['enabled'] as num?)?.toInt() == 1;
-    _bassBoostStrength = ((map['bassBoostStrength'] as num?)?.toDouble() ?? 0.0)
-        .clamp(0.0, 1.0);
-    _androidVirtualizerSupported =
-        (map['virtualizerSupported'] as num?)?.toInt() == 1;
-    _androidVirtualizerStrength =
-        ((map['virtualizerStrength'] as num?)?.toDouble() ?? 0.0).clamp(
-          0.0,
-          1.0,
-        );
-    _androidLoudnessEnhancerSupported =
-        (map['loudnessEnhancerSupported'] as num?)?.toInt() == 1;
-    _androidLoudnessGainDb =
-        ((map['loudnessGainDb'] as num?)?.toDouble() ?? 0.0).clamp(0.0, 24.0);
-    _androidEqPresets = List<String>.from(
-      (map['eqPresets'] as List<dynamic>? ?? const <dynamic>[]).map(
-        (e) => e.toString(),
-      ),
-    );
-    _androidCurrentEqPreset = (map['currentEqPreset'] as num?)?.toInt() ?? -1;
-    _androidPresetReverbSupported =
-        (map['presetReverbSupported'] as num?)?.toInt() == 1;
-    _androidPresetReverbPreset =
-        (map['presetReverbPreset'] as num?)?.toInt() ?? 0;
-    _androidEqMaxBandCount = (map['maxBandCount'] as num?)?.toInt() ?? 30;
-    final bandsRaw = (map['bands'] as List<dynamic>? ?? const <dynamic>[]);
-    _equalizerBands = List<EqualizerBand>.generate(bandsRaw.length, (i) {
-      final b = Map<dynamic, dynamic>.from(
-        bandsRaw[i] as Map<dynamic, dynamic>,
-      );
-      return EqualizerBand(
-        index: (b['index'] as num?)?.toInt() ?? i,
-        centerHz: (b['centerHz'] as num?)?.toDouble() ?? 0.0,
-        minDb: (b['minDb'] as num?)?.toDouble() ?? -15.0,
-        maxDb: (b['maxDb'] as num?)?.toDouble() ?? 15.0,
-        gainDb: (b['gainDb'] as num?)?.toDouble() ?? 0.0,
-      );
-    });
-  }
-
-  Future<void> _applyAndroidEqState() async {
-    if (!isAndroid) {
-      return;
-    }
-    await _androidPlayerChannel.invokeMethod<int>('setEqEnabled', {
-      'enabled': _equalizerEnabled ? 1 : 0,
-    });
-    if (_equalizerBands.isNotEmpty) {
-      await _androidPlayerChannel.invokeMethod<int>('setAndroidEqBandCount', {
-        'bandCount': _equalizerBands.length,
-      });
-    }
-    for (final band in _equalizerBands) {
-      await _androidPlayerChannel.invokeMethod<int>('setEqBandGainDb', {
-        'band': band.index,
-        'gainDb': band.gainDb,
-      });
-    }
-    await _androidPlayerChannel.invokeMethod<int>('setBassBoostStrength', {
-      'strength': _bassBoostStrength,
-    });
-    await _androidPlayerChannel.invokeMethod<int>(
-      'setAndroidVirtualizerStrength',
-      {'strength': _androidVirtualizerStrength},
-    );
-    await _androidPlayerChannel.invokeMethod<int>('setAndroidLoudnessGainDb', {
-      'gainDb': _androidLoudnessGainDb,
-    });
-    if (_androidCurrentEqPreset >= 0) {
-      await _androidPlayerChannel.invokeMethod<int>('setAndroidEqPreset', {
-        'preset': _androidCurrentEqPreset,
-      });
-    }
-    if (_androidPresetReverbPreset > 0) {
-      await _androidPlayerChannel.invokeMethod<int>(
-        'setAndroidPresetReverbPreset',
-        {'preset': _androidPresetReverbPreset},
-      );
-    }
   }
 
   Future<void> _onAnalysisTick() async {

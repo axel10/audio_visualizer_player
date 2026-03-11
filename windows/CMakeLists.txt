@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 3.14)
 
 # Project-level configuration.
 set(PROJECT_NAME "audio_visualizer_player")
-project(${PROJECT_NAME} LANGUAGES CXX)
+project(${PROJECT_NAME} LANGUAGES CXX C)
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
@@ -18,11 +18,23 @@ set(PLUGIN_NAME "audio_visualizer_player_plugin")
 
 # Any new source files that you add to the plugin should be added here.
 set(NATIVE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../native")
+set(SOLOUD_DIR "${NATIVE_DIR}/third_part/soloud")
+
+file(GLOB SOLOUD_SOURCES
+  "${SOLOUD_DIR}/src/core/*.cpp"
+  "${SOLOUD_DIR}/src/audiosource/wav/*.cpp"
+  "${SOLOUD_DIR}/src/audiosource/wav/*.c"
+  "${SOLOUD_DIR}/src/filter/*.cpp"
+  "${SOLOUD_DIR}/src/backend/wasapi/*.cpp"
+)
+
+set_source_files_properties(${SOLOUD_SOURCES} PROPERTIES LANGUAGE CXX)
+
 list(APPEND PLUGIN_SOURCES
   "audio_visualizer_player_plugin.cpp"
   "audio_visualizer_player_plugin.h"
   "${NATIVE_DIR}/src/my_audio_visualizer_native.cpp"
-  "${NATIVE_DIR}/src/fft_utils.cpp"
+  ${SOLOUD_SOURCES}
 )
 
 # Define the plugin library target. Its name must not be changed (see comment
@@ -32,6 +44,9 @@ add_library(${PLUGIN_NAME} SHARED
   "audio_visualizer_player_plugin_c_api.cpp"
   ${PLUGIN_SOURCES}
 )
+
+target_include_directories(${PLUGIN_NAME} PRIVATE "${SOLOUD_DIR}/include")
+target_compile_definitions(${PLUGIN_NAME} PRIVATE WITH_WASAPI)
 
 # Apply a standard set of build settings that are configured in the
 # application-level CMakeLists.txt. This can be removed for plugins that want
@@ -132,3 +147,7 @@ add_custom_command(TARGET ${TEST_RUNNER} POST_BUILD
 include(GoogleTest)
 gtest_discover_tests(${TEST_RUNNER})
 endif()
+set_source_files_properties(
+  "/src/audiosource/wav/stb_vorbis.c" 
+  PROPERTIES LANGUAGE CXX
+)

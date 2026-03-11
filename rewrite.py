@@ -1,4 +1,8 @@
-#include "../include/my_audio_visualizer_native.h"
+import sys
+
+target = r'C:/Users/Administrator/Desktop/projects/player_project/vibe_flow/audio_visualizer_player/native/src/my_audio_visualizer_native.cpp'
+with open(target, 'w', encoding='utf-8') as f:
+    f.write('''#include "../include/my_audio_visualizer_native.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -189,7 +193,7 @@ int MFStreamSource::load(const char* file_path) {
     if (wide_len <= 0) return -1;
     mPath.resize(wide_len);
     MultiByteToWideChar(CP_UTF8, 0, file_path, -1, &mPath[0], wide_len);
-    if (!mPath.empty() && mPath.back() == L'\0') {
+    if (!mPath.empty() && mPath.back() == L'\\0') {
         mPath.pop_back();
     }
     
@@ -282,7 +286,7 @@ MAV_EXPORT void mav_dispose_fft(void) {
 MAV_EXPORT int32_t mav_load_audio_file(const char* file_path) {
     std::lock_guard<std::recursive_mutex> lock(g_mav_mutex);
 #ifdef _WIN32
-    if (!file_path || file_path[0] == '\0') return -1;
+    if (!file_path || file_path[0] == '\\0') return -1;
     EnsureSoloudInited();
     
     if (g_current_source) {
@@ -495,3 +499,4 @@ MAV_EXPORT int32_t mav_simd_width(void) {
 }
 
 } // extern "C"
+''')

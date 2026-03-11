@@ -57,7 +57,7 @@ class _VisualizerDemoPageState extends State<VisualizerDemoPage> {
       ),
     );
     _controller.initialize();
-    _optimizedSub = _controller.rawFftStream.listen((frame) {
+    _optimizedSub = _controller.optimizedFftStream.listen((frame) {
       if (!mounted) {
         return;
       }
@@ -68,17 +68,38 @@ class _VisualizerDemoPageState extends State<VisualizerDemoPage> {
   }
 
   Future<void> _pickAudio() async {
-    final result = await FilePicker.platform.pickFiles(type: FileType.audio);
+    if (!_controller.isInitialized) {
+      await _controller.initialize();
+    }
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.audio,
+      allowMultiple: true,
+    );
     if (result == null || result.files.isEmpty) {
       return;
     }
-    final file = result.files.single;
-    final path = file.path;
 
-    if (path == null || path.isEmpty) {
+    final tracks = result.files.map((file) {
+      final path = file.path;
+      if (path == null || path.isEmpty) {
+        return null;
+      }
+      return AudioTrack(
+        id: path,
+        title: file.name,
+        uri: path,
+      );
+    }).whereType<AudioTrack>().toList();
+
+    if (tracks.isEmpty) {
       return;
     }
-    await _controller.loadFromPath(path);
+
+    await _controller.addTracks(tracks);
+    // If nothing is playing, start the first one
+    if (_controller.selectedPath == null) {
+      await _controller.playAt(0);
+    }
   }
 
   @override
@@ -112,9 +133,23 @@ class _VisualizerDemoPageState extends State<VisualizerDemoPage> {
 
                     ElevatedButton(
                       onPressed: _controller.selectedPath != null
+                          ? _controller.playPrevious
+                          : null,
+                      child: const Icon(Icons.skip_previous),
+                    ),
+                    const SizedBox(width: 12),
+                    ElevatedButton(
+                      onPressed: _controller.selectedPath != null
                           ? _controller.togglePlayPause
                           : null,
-                      child: Text(_controller.isPlaying ? 'Pause' : 'Play'),
+                      child: Icon(_controller.isPlaying ? Icons.pause : Icons.play_arrow),
+                    ),
+                    const SizedBox(width: 12),
+                    ElevatedButton(
+                      onPressed: _controller.selectedPath != null
+                          ? _controller.playNext
+                          : null,
+                      child: const Icon(Icons.skip_next),
                     ),
                   ],
                 ),
@@ -138,12 +173,32 @@ class _VisualizerDemoPageState extends State<VisualizerDemoPage> {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                if (_controller.playlist.isNotEmpty)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Playlist: ${(_controller.currentIndex ?? -1) + 1} / ${_controller.playlist.length}',
+                    ),
+                  ),
                 const SizedBox(height: 8),
                 Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
                     '${_format(_controller.position)} / ${_format(_controller.duration)}',
                   ),
+                ),
+                Slider(
+                  value: _controller.duration.inMilliseconds > 0
+                      ? _controller.position.inMilliseconds
+                          .toDouble()
+                          .clamp(0, _controller.duration.inMilliseconds.toDouble())
+                      : 0.0,
+                  max: _controller.duration.inMilliseconds.toDouble() > 0
+                      ? _controller.duration.inMilliseconds.toDouble()
+                      : 1.0,
+                  onChanged: (value) {
+                    _controller.seek(Duration(milliseconds: value.toInt()));
+                  },
                 ),
                 if (_controller.error != null) ...[
                   const SizedBox(height: 8),
@@ -197,7 +252,7 @@ class DemoSpectrumPainter extends CustomPainter {
     if (bands.isEmpty) {
       return;
     }
-    debugPrint(bands.toString());
+    // debugPrint(bands.toString());
     const safeTop = 6.0;
     const safeBottom = 6.0;
     const gap = 2.0;
@@ -263,11 +318,26 @@ class _AudioDropRegionState extends State<AudioDropRegion> {
     if (!_enabled || files.isEmpty) {
       return;
     }
-    final path = files.first.path;
-    if (path.isEmpty || !File(path).existsSync()) {
-      return;
+    if (!widget.controller.isInitialized) {
+      await widget.controller.initialize();
     }
-    await widget.controller.loadFromPath(path);
+    final List<AudioTrack> tracks = [];
+    for (final file in files) {
+      final path = file.path;
+      if (path.isNotEmpty && File(path).existsSync()) {
+        tracks.add(AudioTrack(
+          id: path,
+          title: file.name,
+          uri: path,
+        ));
+      }
+    }
+    if (tracks.isEmpty) return;
+
+    await widget.controller.addTracks(tracks);
+    if (widget.controller.selectedPath == null) {
+      await widget.controller.playAt(0);
+    }
   }
 
   @override

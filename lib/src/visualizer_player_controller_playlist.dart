@@ -256,8 +256,12 @@ mixin _PlaylistControllerMixin on ChangeNotifier {
 
   /// Adds multiple tracks to the end of active playlist.
   Future<void> addTracks(List<AudioTrack> tracks) async {
-    if (tracks.isEmpty || _activePlaylistId == null) {
+    if (tracks.isEmpty) {
       return;
+    }
+    // Ensure we have an active playlist before adding tracks
+    if (_activePlaylistId == null) {
+      await _ensureActivePlaylist();
     }
     final wasEmpty = _activePlaylistTracks.isEmpty;
     _activePlaylistTracks.addAll(tracks);
@@ -276,8 +280,9 @@ mixin _PlaylistControllerMixin on ChangeNotifier {
 
   /// Inserts one track at [index] in active playlist.
   Future<void> insertTrack(int index, AudioTrack track) async {
+    // Ensure we have an active playlist before inserting
     if (_activePlaylistId == null) {
-      return;
+      await _ensureActivePlaylist();
     }
     final target = index.clamp(0, _activePlaylistTracks.length);
     _activePlaylistTracks.insert(target, track);

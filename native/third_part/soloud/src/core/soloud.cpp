@@ -132,7 +132,7 @@ namespace SoLoud
 			mFilter[i] = NULL;
 			mFilterInstance[i] = NULL;
 		}
-		for (i = 0; i < 256; i++)
+		for (i = 0; i < 1024; i++)
 		{
 			mFFTData[i] = 0;
 			mVisualizationWaveData[i] = 0;
@@ -701,7 +701,7 @@ namespace SoLoud
 	{
 		int i;
 		lockAudioMutex_internal();
-		for (i = 0; i < 256; i++)
+		for (i = 0; i < 1024; i++)
 			mWaveData[i] = mVisualizationWaveData[i];
 		unlockAudioMutex_internal();
 		return mWaveData;
@@ -722,20 +722,20 @@ namespace SoLoud
 	float * Soloud::calcFFT()
 	{
 		lockAudioMutex_internal();
-		float temp[1024];
+		float temp[4096];
 		int i;
-		for (i = 0; i < 256; i++)
+		for (i = 0; i < 1024; i++)
 		{
 			temp[i*2] = mVisualizationWaveData[i];
 			temp[i*2+1] = 0;
-			temp[i+512] = 0;
-			temp[i+768] = 0;
+			temp[i+2048] = 0;
+			temp[i+3072] = 0;
 		}
 		unlockAudioMutex_internal();
 
-		SoLoud::FFT::fft1024(temp);
+		SoLoud::FFT::fft(temp, 4096);
 
-		for (i = 0; i < 256; i++)
+		for (i = 0; i < 1024; i++)
 		{
 			float real = temp[i * 2];
 			float imag = temp[i * 2 + 1];
@@ -1831,6 +1831,8 @@ namespace SoLoud
 
 	void Soloud::mix_internal(unsigned int aSamples)
 	{
+		if (aSamples == 0) return;
+
 #ifdef FLOATING_POINT_DEBUG
 		// This needs to be done in the audio thread as well..
 		static int done = 0;
@@ -1985,9 +1987,9 @@ namespace SoLoud
 			{
 				mVisualizationChannelVolume[i] = 0;
 			}
-			if (aSamples > 255)
+			if (aSamples > 1023)
 			{
-				for (i = 0; i < 256; i++)
+				for (i = 0; i < 1024; i++)
 				{
 					int j;
 					mVisualizationWaveData[i] = 0;
@@ -2004,7 +2006,7 @@ namespace SoLoud
 			else
 			{
 				// Very unlikely failsafe branch
-				for (i = 0; i < 256; i++)
+				for (i = 0; i < 1024; i++)
 				{
 					int j;
 					mVisualizationWaveData[i] = 0;

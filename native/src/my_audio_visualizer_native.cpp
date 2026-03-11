@@ -119,8 +119,10 @@ SoLoud::result MFStreamInstance::seek(SoLoud::time aSeconds, float *mScratch, un
     
     HRESULT hr = mReader->SetCurrentPosition(GUID_NULL, var);
     PropVariantClear(&var);
-    
+
     if (SUCCEEDED(hr)) {
+        this->mStreamPosition = aSeconds;
+        this->mStreamTime = aSeconds;
         mLeftover.clear();
         mLeftoverPos = 0;
         mEnded = false;
@@ -254,7 +256,7 @@ static void EnsureSoloudInited() {
 extern "C" {
 
 MAV_EXPORT int32_t mav_create_fft(int32_t fft_size) {
-    // We ignore fft_size because SoLoud uses fixed 256 bands for its visualizer
+    // We ignore fft_size because SoLoud uses fixed 1024 bands for its visualizer
     return 0;
 }
 
@@ -356,7 +358,7 @@ MAV_EXPORT int32_t mav_player_get_position_ms(void) {
 #ifdef _WIN32
     EnsureSoloudInited();
     if (g_soloud.isValidVoiceHandle(g_current_handle)) {
-        return (int32_t)(g_soloud.getStreamTime(g_current_handle) * 1000.0);
+        return (int32_t)(g_soloud.getStreamPosition(g_current_handle) * 1000.0);
     }
     return 0;
 #else
@@ -417,13 +419,13 @@ MAV_EXPORT int32_t mav_compute_spectrum_at_ms(int32_t position_ms, float* out_ma
     EnsureSoloudInited();
     if (!out_magnitudes || out_count <= 0) return -10;
     
-    // Soloud provides 256 buckets
+    // Soloud provides 1024 buckets
     float* fft = g_soloud.calcFFT();
     
-    // Resample/map 256 down/up to out_count evenly
+    // Resample/map 1024 down/up to out_count evenly
     for (int32_t i = 0; i < out_count; ++i) {
-        int index = (i * 256) / out_count;
-        if (index > 255) index = 255;
+        int index = (i * 1024) / out_count;
+        if (index > 1023) index = 1023;
         if (index < 0) index = 0;
         out_magnitudes[i] = fft[index];
     }
@@ -446,7 +448,7 @@ MAV_EXPORT int32_t mav_compute_compressed_bands_at_ms(int32_t position_ms, float
     }
     
     float* fft = g_soloud.calcFFT();
-    int32_t bins = 256;
+    int32_t bins = 1024;
     
     // Same log-scaling logic as before
     for (int32_t b = 0; b < band_count; ++b) {

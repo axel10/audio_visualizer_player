@@ -354,10 +354,10 @@ namespace SoLoud
 		// Enable or disable visualization data gathering
 		void setVisualizationEnable(bool aEnable);
 
-		// Calculate and get 256 floats of FFT data for visualization. Visualization has to be enabled before use.
+		// Calculate and get 1024 floats of FFT data for visualization. Visualization has to be enabled before use.
 		float *calcFFT();
 
-		// Get 256 floats of wave data for visualization. Visualization has to be enabled before use.
+		// Get 1024 floats of wave data for visualization. Visualization has to be enabled before use.
 		float *getWave();
 
 		// Get approximate output volume for a channel for visualization. Visualization has to be enabled before use.
@@ -516,11 +516,11 @@ namespace SoLoud
 		// Approximate volume for channels.
 		float mVisualizationChannelVolume[MAX_CHANNELS];
 		// Mono-mixed wave data for visualization and for visualization FFT input
-		float mVisualizationWaveData[256];
+		float mVisualizationWaveData[1024];
 		// FFT output data
-		float mFFTData[256];
+		float mFFTData[1024];
 		// Snapshot of wave data for visualization
-		float mWaveData[256];
+		float mWaveData[1024];
 
 		// 3d listener position
 		float m3dPosition[3];

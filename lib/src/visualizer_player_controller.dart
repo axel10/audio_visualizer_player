@@ -73,6 +73,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   bool _initialized = false;
   bool _androidPollInFlight = false;
   int _lastAnalysisMicros = 0;
+  bool _fftEnabled = true;
 
   String? _selectedPath;
   String? _error;
@@ -128,6 +129,9 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
 
   /// Stream of smoothed/grouped FFT frames for visualization.
   Stream<FftFrame> get optimizedFftStream => _optimizedFftController.stream;
+
+  /// Whether FFT computation and data emission is enabled.
+  bool get fftEnabled => _fftEnabled;
 
   /// Returns latest raw FFT magnitudes.
   List<double> getRawFft() => _fftProcessor.latestRawFft;
@@ -516,6 +520,27 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     }
   }
 
+  /// Enables or disables FFT computation and data emission.
+  ///
+  /// When disabled, stops all FFT calculations and clears FFT data.
+  /// When enabled, resumes FFT computation on next analysis tick.
+  Future<void> setFftEnabled(bool enabled) async {
+    if (_fftEnabled == enabled) {
+      return;
+    }
+    _fftEnabled = enabled;
+    if (!_fftEnabled) {
+      _resetFftState();
+    }
+    // _emitPlaylistState();
+    notifyListeners();
+  }
+
+  /// Toggles FFT computation on/off.
+  Future<void> toggleFftEnabled() async {
+    await setFftEnabled(!_fftEnabled);
+  }
+
   Future<int> _androidCallInt(
     String method, [
     Map<String, dynamic>? args,
@@ -525,7 +550,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   }
 
   Future<void> _onAnalysisTick() async {
-    if (_selectedPath == null) {
+    if (_selectedPath == null || !_fftEnabled) {
       return;
     }
     await _pollPlaybackState();
@@ -561,7 +586,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   }
 
   void _onRenderTick() {
-    if (_selectedPath == null || !_needOptimizedCompute) {
+    if (_selectedPath == null || !_fftEnabled || !_needOptimizedCompute) {
       return;
     }
     _fftProcessor.processRender(

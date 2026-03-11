@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import 'fft_processor.dart';
 import 'mav_native.dart';
 
 /// A single FFT frame emitted by the player.
@@ -96,124 +97,6 @@ class PlaylistState {
   final AudioTrack? currentTrack;
 }
 
-/// Aggregation strategy used when compressing FFT bins into visual groups.
-enum FftAggregationMode { peak, mean, rms }
-
-/// Runtime options for FFT smoothing and visualization output.
-class VisualizerOptimizationOptions {
-  const VisualizerOptimizationOptions({
-    // Higher => more stable bars, lower => quicker response.
-    this.smoothingCoefficient = 0.55,
-    // Higher => bars fall faster after peaks.
-    this.gravityCoefficient = 1.2,
-    // >1.0 boosts low-level details for quiet bands.
-    this.logarithmicScale = 2.0,
-    // Relative noise floor (dB) for normalization.
-    this.normalizationFloorDb = -70.0,
-    this.aggregationMode = FftAggregationMode.peak,
-    // Number of output bars.
-    this.frequencyGroups = 32,
-    // Number of high frequency groups to skip.
-    this.skipHighFrequencyGroups = 0,
-    this.targetFrameRate = 60.0,
-    // 1.0 keeps original contrast; >1.0 increases per-group separation.
-    this.groupContrastExponent = 1.35,
-    // Final output multiplier applied to optimized values.
-    this.overallMultiplier = 1.0,
-  });
-
-  /// Temporal smoothing factor in range `0..1` (higher = smoother).
-  ///
-  /// Use this when bars are too jittery.
-  /// Typical range: `0.45..0.85`.
-  final double smoothingCoefficient;
-
-  /// Fall speed when magnitudes drop (higher = faster drop).
-  ///
-  /// Use this when peaks linger too long.
-  /// Typical range: `0.8..3.0`.
-  final double gravityCoefficient;
-
-  /// Log scaling strength for normalized values.
-  ///
-  /// Use this to make quieter details more visible.
-  /// Typical range: `1.0..4.0`.
-  final double logarithmicScale;
-
-  /// dB floor used during normalization.
-  ///
-  /// Less negative (e.g. `-50`) => punchier dynamics.
-  /// More negative (e.g. `-90`) => smoother output.
-  /// Typical range: `-90..-45`.
-  final double normalizationFloorDb;
-
-  /// Bin aggregation mode when reducing FFT bins.
-  ///
-  /// - [FftAggregationMode.peak]: strongest transient feel.
-  /// - [FftAggregationMode.mean]: smooth average energy.
-  /// - [FftAggregationMode.rms]: balanced loudness feel.
-  final FftAggregationMode aggregationMode;
-
-  /// Number of output visual frequency groups.
-  ///
-  /// Higher values give finer detail but more visual noise.
-  /// Typical range: `24..96`.
-  final int frequencyGroups;
-
-  /// Number of high frequency groups to skip from the visual output.
-  ///
-  /// Use this to remove the far right bars that often contain very little energy
-  /// or are outside the audible/interesting range for visualization.
-  final int skipHighFrequencyGroups;
-
-  /// Target visual frame rate for interpolated output.
-  ///
-  /// Typical range: `30..120`.
-  final double targetFrameRate;
-
-  /// Extra contrast control for grouped bars.
-  ///
-  /// This option can increase the comparison between each group:
-  /// - `1.0`: no extra contrast.
-  /// - `>1.0`: strong groups become stronger, weak groups become weaker.
-  /// - `<1.0`: differences are compressed.
-  ///
-  /// Typical range: `1.1..2.0`.
-  final double groupContrastExponent;
-
-  /// Final multiplier applied to optimized output values.
-  ///
-  /// Use this to scale the visual amplitude without changing dynamics.
-  /// Typical range: `0.5..3.0`.
-  final double overallMultiplier;
-
-  VisualizerOptimizationOptions copyWith({
-    double? smoothingCoefficient,
-    double? gravityCoefficient,
-    double? logarithmicScale,
-    double? normalizationFloorDb,
-    FftAggregationMode? aggregationMode,
-    int? frequencyGroups,
-    int? skipHighFrequencyGroups,
-    double? targetFrameRate,
-    double? groupContrastExponent,
-    double? overallMultiplier,
-  }) => VisualizerOptimizationOptions(
-    smoothingCoefficient: smoothingCoefficient ?? this.smoothingCoefficient,
-    gravityCoefficient: gravityCoefficient ?? this.gravityCoefficient,
-    logarithmicScale: logarithmicScale ?? this.logarithmicScale,
-    normalizationFloorDb: normalizationFloorDb ?? this.normalizationFloorDb,
-    aggregationMode: aggregationMode ?? this.aggregationMode,
-    frequencyGroups: frequencyGroups ?? this.frequencyGroups,
-    skipHighFrequencyGroups:
-        skipHighFrequencyGroups ?? this.skipHighFrequencyGroups,
-    targetFrameRate: targetFrameRate ?? this.targetFrameRate,
-    groupContrastExponent:
-        groupContrastExponent ?? this.groupContrastExponent,
-    overallMultiplier: overallMultiplier ?? this.overallMultiplier,
-  );
-}
-
 /// High-level controller for audio playback, playlist management, and FFT data.
 ///
 /// Supported platforms: Windows and Android.
@@ -229,15 +112,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
        assert(visualOptions.frequencyGroups > 0),
        assert(visualOptions.targetFrameRate > 0),
        assert(visualOptions.groupContrastExponent > 0) {
-    _visualOptions = visualOptions;
-    _latestRawFft = const [];
-    _latestOptimizedFft = List<double>.filled(
-      _visualOptions.frequencyGroups,
-      0.0,
-    );
-    _optimizedState = List<double>.filled(_visualOptions.frequencyGroups, 0.0);
-    _interpFrom = List<double>.filled(_visualOptions.frequencyGroups, 0.0);
-    _interpTo = List<double>.filled(_visualOptions.frequencyGroups, 0.0);
+    _fftProcessor = FftProcessor(fftSize: fftSize, options: visualOptions);
   }
 
   static const MethodChannel _androidPlayerChannel = MethodChannel(
@@ -254,7 +129,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   final double analysisFrequencyHz;
 
   /// Output smoothing/grouping options for visualization.
-  VisualizerOptimizationOptions get visualOptions => _visualOptions;
+  VisualizerOptimizationOptions get visualOptions => _fftProcessor.options;
 
   MavNative? _native;
   StreamSubscription<dynamic>? _androidFftSub;
@@ -263,7 +138,6 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   bool _initialized = false;
   bool _androidPollInFlight = false;
   int _lastAnalysisMicros = 0;
-  int _interpMicros = 0;
 
   String? _selectedPath;
   String? _error;
@@ -271,15 +145,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   Duration _position = Duration.zero;
   bool _isPlaying = false;
   double _volume = 1.0;
-  bool _equalizerEnabled = true;
-  double _bassBoostStrength = 0.0;
-  bool _equalizerSupported = false;
-  bool _androidVirtualizerSupported = false;
-  double _androidVirtualizerStrength = 0.0;
-  bool _androidLoudnessEnhancerSupported = false;
-  double _androidLoudnessGainDb = 0.0;
-  bool _androidPresetReverbSupported = false;
-  int _androidPresetReverbPreset = 0;
+
   final List<AudioTrack> _playlist = <AudioTrack>[];
   final List<int> _playOrder = <int>[];
   int? _currentIndex;
@@ -290,13 +156,8 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   bool _playlistInternalLoad = false;
   bool _autoTransitionInFlight = false;
   int _autoAdvanceSuppressedUntilMicros = 0;
-  late VisualizerOptimizationOptions _visualOptions;
 
-  late List<double> _latestRawFft;
-  late List<double> _latestOptimizedFft;
-  late List<double> _optimizedState;
-  late List<double> _interpFrom;
-  late List<double> _interpTo;
+  late final FftProcessor _fftProcessor;
 
   final StreamController<FftFrame> _rawFftController =
       StreamController<FftFrame>.broadcast();
@@ -337,15 +198,6 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   /// Output volume in range `0..1`.
   double get volume => _volume;
 
-  /// Whether equalizer processing is enabled.
-  bool get equalizerEnabled => _equalizerEnabled;
-
-  /// Bass boost strength in range `0..1`.
-  double get bassBoostStrength => _bassBoostStrength;
-
-  /// Whether equalizer is supported on current platform/runtime.
-  bool get equalizerSupported => _equalizerSupported;
-
   /// Current playlist in logical order.
   List<AudioTrack> get playlist => List<AudioTrack>.unmodifiable(_playlist);
 
@@ -379,11 +231,10 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   Stream<PlaylistState> get playlistStream => _playlistStateController.stream;
 
   /// Returns latest raw FFT magnitudes.
-  List<double> getRawFft() => List<double>.unmodifiable(_latestRawFft);
+  List<double> getRawFft() => _fftProcessor.latestRawFft;
 
   /// Returns latest optimized FFT magnitudes.
-  List<double> getOptimizedFft() =>
-      List<double>.unmodifiable(_latestOptimizedFft);
+  List<double> getOptimizedFft() => _fftProcessor.latestOptimizedFft;
 
   bool get _needOptimizedCompute => _optimizedFftController.hasListener;
 
@@ -437,9 +288,12 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
         if (event is! List<dynamic>) {
           return;
         }
-        _latestRawFft = List<double>.generate(
-          event.length,
-          (i) => (event[i] as num).toDouble(),
+        _fftProcessor.processAnalysis(
+          List<double>.generate(
+            event.length,
+            (i) => (event[i] as num).toDouble(),
+          ),
+          0.0, // dtSec not strictly needed for raw update if not smoothing raw
         );
       });
     }
@@ -653,8 +507,6 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     }
     notifyListeners();
   }
-
-
 
   /// Replaces the playlist and selects [startIndex].
   ///
@@ -885,29 +737,11 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     assert(options.targetFrameRate > 0);
     assert(options.groupContrastExponent > 0);
 
-    final old = _visualOptions;
-    final groupsChanged = old.frequencyGroups != options.frequencyGroups;
+    final old = _fftProcessor.options;
     final frameRateChanged =
         (old.targetFrameRate - options.targetFrameRate).abs() > 1e-9;
 
-    _visualOptions = options;
-
-    if (groupsChanged) {
-      _latestOptimizedFft = _resampleFftState(
-        _latestOptimizedFft,
-        _visualOptions.frequencyGroups,
-      );
-      _optimizedState = _resampleFftState(
-        _optimizedState,
-        _visualOptions.frequencyGroups,
-      );
-      _interpFrom = List<double>.from(_latestOptimizedFft);
-      _interpTo = List<double>.from(_optimizedState);
-      _interpMicros = 0;
-      if (_needOptimizedCompute) {
-        _emitOptimizedFftFrame();
-      }
-    }
+    _fftProcessor.updateOptions(options);
 
     if (frameRateChanged && _initialized) {
       _restartRenderTick();
@@ -928,7 +762,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     double? groupContrastExponent,
   }) {
     updateVisualOptions(
-      _visualOptions.copyWith(
+      visualOptions.copyWith(
         smoothingCoefficient: smoothingCoefficient,
         gravityCoefficient: gravityCoefficient,
         logarithmicScale: logarithmicScale,
@@ -973,14 +807,14 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   /// Current raw FFT frame snapshot.
   FftFrame getCurrentRawFftFrame() => FftFrame(
     position: _position,
-    values: List<double>.unmodifiable(_latestRawFft),
+    values: _fftProcessor.latestRawFft,
     isPlaying: _isPlaying,
   );
 
   /// Current optimized FFT frame snapshot.
   FftFrame getCurrentOptimizedFftFrame() => FftFrame(
     position: _position,
-    values: List<double>.unmodifiable(_latestOptimizedFft),
+    values: _fftProcessor.latestOptimizedFft,
     isPlaying: _isPlaying,
   );
 
@@ -1017,7 +851,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
         outCount: fftSize ~/ 2,
       );
     } else {
-      rawBins = _latestRawFft;
+      rawBins = _fftProcessor.latestRawFft;
     }
     if (rawBins.isEmpty) {
       return;
@@ -1026,59 +860,23 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
       rawBins = List<double>.filled(rawBins.length, 0.0);
     }
 
-    _latestRawFft = rawBins;
-    _emitRawFftFrame();
-
-    if (!_needOptimizedCompute) {
-      return;
-    }
-
     final nowMicros = DateTime.now().microsecondsSinceEpoch;
     final dtSec = _lastAnalysisMicros == 0
         ? _analysisInterval.inMicroseconds / 1000000.0
         : (nowMicros - _lastAnalysisMicros) / 1000000.0;
     _lastAnalysisMicros = nowMicros;
 
-    final grouped = _groupBins(
-      rawBins,
-      visualOptions.frequencyGroups,
-      visualOptions.aggregationMode,
-      visualOptions.skipHighFrequencyGroups,
-    );
-    final normalized = _normalizeAndScale(
-      grouped,
-      visualOptions.logarithmicScale,
-      visualOptions.normalizationFloorDb,
-      visualOptions.groupContrastExponent,
-    );
-    final optimized = _applySmoothingAndGravity(
-      previous: _optimizedState,
-      next: normalized,
-      smoothing: visualOptions.smoothingCoefficient,
-      gravity: visualOptions.gravityCoefficient,
-      dtSec: dtSec,
-    );
-
-    _optimizedState = optimized;
-    _interpFrom = List<double>.from(_latestOptimizedFft);
-    _interpTo = List<double>.from(_optimizedState);
-    _interpMicros = 0;
+    _fftProcessor.processAnalysis(rawBins, dtSec);
+    _emitRawFftFrame();
   }
 
   void _onRenderTick() {
     if (_selectedPath == null || !_needOptimizedCompute) {
       return;
     }
-    final analysisMicros = _analysisInterval.inMicroseconds;
-    _interpMicros = (_interpMicros + _renderInterval.inMicroseconds).clamp(
-      0,
-      analysisMicros,
-    );
-    final t = analysisMicros == 0 ? 1.0 : _interpMicros / analysisMicros;
-    final outputMultiplier = visualOptions.overallMultiplier;
-    _latestOptimizedFft = List<double>.generate(
-      visualOptions.frequencyGroups,
-      (i) => _lerp(_interpFrom[i], _interpTo[i], t) * outputMultiplier,
+    _fftProcessor.processRender(
+      _renderInterval.inMicroseconds,
+      _analysisInterval.inMicroseconds,
     );
     _emitOptimizedFftFrame();
   }
@@ -1086,36 +884,6 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   void _restartRenderTick() {
     _renderTick?.cancel();
     _renderTick = Timer.periodic(_renderInterval, (_) => _onRenderTick());
-  }
-
-  List<double> _resampleFftState(List<double> source, int targetLength) {
-    if (targetLength <= 0) {
-      return const <double>[];
-    }
-    if (source.isEmpty) {
-      return List<double>.filled(targetLength, 0.0);
-    }
-    if (source.length == targetLength) {
-      return List<double>.from(source);
-    }
-    if (targetLength == 1) {
-      return <double>[source.first];
-    }
-
-    final out = List<double>.filled(targetLength, 0.0);
-    final maxSrc = source.length - 1;
-    for (var i = 0; i < targetLength; i++) {
-      final pos = (i * maxSrc) / (targetLength - 1);
-      final left = pos.floor();
-      final right = pos.ceil().clamp(0, maxSrc);
-      if (left == right) {
-        out[i] = source[left];
-      } else {
-        final t = pos - left;
-        out[i] = _lerp(source[left], source[right], t);
-      }
-    }
-    return out;
   }
 
   Future<void> _pollPlaybackState() async {
@@ -1308,144 +1076,6 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     }
   }
 
-  List<double> _groupBins(
-    List<double> bins,
-    int groups,
-    FftAggregationMode aggregationMode,
-    int skipHighFrequencyGroups,
-  ) {
-    if (bins.isEmpty) {
-      return List<double>.filled(groups, 0.0);
-    }
-    if (bins.length <= 2) {
-      return List<double>.filled(
-        groups,
-        bins.first.clamp(0.0, double.infinity),
-      );
-    }
-
-    final out = List<double>.filled(groups, 0.0);
-    final totalGroups = (groups + skipHighFrequencyGroups).clamp(groups, 512);
-    final binCount = bins.length;
-
-    final boundaries = List<int>.filled(totalGroups + 1, 1);
-    boundaries[0] = 1;
-    boundaries[totalGroups] = binCount;
-    for (var i = 1; i < totalGroups; i++) {
-      final t = i / totalGroups;
-      boundaries[i] = (math.pow(binCount.toDouble(), t).toDouble() - 1.0)
-          .round()
-          .clamp(1, binCount - 1);
-    }
-    for (var i = 1; i <= totalGroups; i++) {
-      if (boundaries[i] <= boundaries[i - 1]) {
-        boundaries[i] = (boundaries[i - 1] + 1).clamp(1, binCount);
-      }
-    }
-    boundaries[totalGroups] = binCount;
-
-    for (var g = 0; g < groups; g++) {
-      final start = boundaries[g];
-      final end = boundaries[g + 1];
-      if (end <= start) {
-        out[g] = 0.0;
-        continue;
-      }
-      var acc = 0.0;
-      var peak = 0.0;
-      for (var i = start; i < end; i++) {
-        final v = bins[i];
-        if (v > peak) {
-          peak = v;
-        }
-        acc += v;
-      }
-      final count = (end - start).toDouble();
-      switch (aggregationMode) {
-        case FftAggregationMode.peak:
-          out[g] = peak;
-          break;
-        case FftAggregationMode.mean:
-          out[g] = acc / count;
-          break;
-        case FftAggregationMode.rms:
-          var square = 0.0;
-          for (var i = start; i < end; i++) {
-            final v = bins[i];
-            square += v * v;
-          }
-          out[g] = math.sqrt(square / count);
-          break;
-      }
-    }
-    return out;
-  }
-
-  List<double> _normalizeAndScale(
-    List<double> grouped,
-    double logScale,
-    double normalizationFloorDb,
-    double contrastExponent,
-  ) {
-    final out = List<double>.filled(grouped.length, 0.0);
-    var framePeak = 0.0;
-    for (final v in grouped) {
-      if (v > framePeak) {
-        framePeak = v;
-      }
-    }
-    if (framePeak <= 1e-9) {
-      return out;
-    }
-    // Absolute normalization reference to avoid boosting very quiet frames.
-    // Using fftSize/2 keeps "quiet" content visually quiet.
-    final ref = (fftSize / 2.0).clamp(1.0, double.infinity);
-    final noiseFloorDb = normalizationFloorDb.clamp(-120.0, -10.0);
-    final invRange = 1.0 / -noiseFloorDb;
-
-    for (var i = 0; i < grouped.length; i++) {
-      final ratio = (grouped[i] + 1e-9) / ref;
-      final dbRelative = 20.0 * math.log(ratio) / math.ln10;
-      var normalized = (dbRelative - noiseFloorDb) * invRange;
-      normalized = normalized.clamp(0.0, 1.0);
-      if (logScale > 1.0) {
-        final k = logScale - 1.0;
-        normalized = math.log(1.0 + normalized * k) / math.log(1.0 + k);
-      }
-      final ce = contrastExponent.clamp(0.1, 6.0);
-      if (ce != 1.0) {
-        normalized = math.pow(normalized, ce).toDouble();
-      }
-      out[i] = normalized;
-    }
-    return out;
-  }
-
-  List<double> _applySmoothingAndGravity({
-    required List<double> previous,
-    required List<double> next,
-    required double smoothing,
-    required double gravity,
-    required double dtSec,
-  }) {
-    final out = List<double>.filled(next.length, 0.0);
-    final s = smoothing.clamp(0.0, 0.99);
-    final dropStep = (gravity.clamp(0.0, 10.0)) * dtSec;
-    for (var i = 0; i < next.length; i++) {
-      final oldV = i < previous.length ? previous[i] : 0.0;
-      final newV = next[i];
-      var candidate = newV;
-      if (newV < oldV) {
-        candidate = math.max(newV, oldV - dropStep);
-      }
-      out[i] = (oldV * s) + (candidate * (1.0 - s));
-    }
-    return out;
-  }
-
-  double _lerp(double a, double b, double t) =>
-      a + ((b - a) * t.clamp(0.0, 1.0));
-
   void _emitRawFftFrame() {
     if (_rawFftController.isClosed || !_rawFftController.hasListener) {
       return;
@@ -1453,7 +1083,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     _rawFftController.add(
       FftFrame(
         position: _position,
-        values: List<double>.unmodifiable(_latestRawFft),
+        values: _fftProcessor.latestRawFft,
         isPlaying: _isPlaying,
       ),
     );
@@ -1467,23 +1097,15 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     _optimizedFftController.add(
       FftFrame(
         position: _position,
-        values: List<double>.unmodifiable(_latestOptimizedFft),
+        values: _fftProcessor.latestOptimizedFft,
         isPlaying: _isPlaying,
       ),
     );
   }
 
   void _resetFftState() {
-    _latestRawFft = const [];
-    _latestOptimizedFft = List<double>.filled(
-      _visualOptions.frequencyGroups,
-      0.0,
-    );
-    _optimizedState = List<double>.filled(_visualOptions.frequencyGroups, 0.0);
-    _interpFrom = List<double>.filled(_visualOptions.frequencyGroups, 0.0);
-    _interpTo = List<double>.filled(_visualOptions.frequencyGroups, 0.0);
+    _fftProcessor.resetState();
     _lastAnalysisMicros = 0;
-    _interpMicros = 0;
   }
 
   @override

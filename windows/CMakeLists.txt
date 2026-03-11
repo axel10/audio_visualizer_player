@@ -22,6 +22,7 @@ list(APPEND PLUGIN_SOURCES
   "audio_visualizer_player_plugin.cpp"
   "audio_visualizer_player_plugin.h"
   "${NATIVE_DIR}/src/my_audio_visualizer_native.cpp"
+  "${NATIVE_DIR}/src/fft_utils.cpp"
 )
 
 # Define the plugin library target. Its name must not be changed (see comment

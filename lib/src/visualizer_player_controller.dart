@@ -11,7 +11,6 @@ import 'fft_processor.dart';
 import 'mav_native.dart';
 import 'player_models.dart';
 
-
 /// A single FFT frame emitted by the player.
 ///
 /// Contains the playback [position], FFT [values], and whether the player
@@ -80,7 +79,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   Duration _duration = Duration.zero;
   Duration _position = Duration.zero;
   bool _isPlaying = false;
-  
+
   double _volume = 1.0;
   PlayerState _playerState = PlayerState.idle;
 
@@ -679,19 +678,8 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     super.dispose();
   }
 
+  /////////////////////////   playlist   //////////////////////////////
 
-
-
-
-
-
-/////////////////////////   playlist   //////////////////////////////
-
-
-
-
-
-  
   // Playlist collection management
   static const String _defaultPlaylistId = '__default__';
   final List<Playlist> _playlists = <Playlist>[];
@@ -719,11 +707,17 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   late final ValueNotifier<PlayerControllerState> _playlistStateNotifier =
       ValueNotifier<PlayerControllerState>(_buildControllerState());
 
-
   /// All user-visible playlists (excludes internal __default__).
   List<Playlist> get playlists => List<Playlist>.unmodifiable(
     _playlists.where((p) => p.id != _defaultPlaylistId).toList(),
   );
+
+  /// Queue playlist backed by internal id `__default__`.
+  Playlist? get queue => getPlaylistById(_defaultPlaylistId);
+
+  /// Queue tracks snapshot.
+  List<AudioTrack> get queueTracks =>
+      List<AudioTrack>.unmodifiable(queue?.items ?? const <AudioTrack>[]);
 
   /// Current active playlist, or `null` if none.
   Playlist? get activePlaylist {
@@ -880,9 +874,19 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     _activePlaylistTracks
       ..clear()
       ..addAll(playlist.items);
-    _currentIndex = playlist.items.isEmpty
-        ? null
-        : startIndex.clamp(0, playlist.items.length - 1);
+    if (playlist.items.isEmpty) {
+      if (startIndex != 0) {
+        throw RangeError.value(
+          startIndex,
+          'startIndex',
+          'Must be 0 when playlist is empty',
+        );
+      }
+      _currentIndex = null;
+    } else {
+      _assertValidIndex(startIndex, playlist.items, 'startIndex');
+      _currentIndex = startIndex;
+    }
     _rebuildPlayOrder(keepCurrentAtFront: _shuffleEnabled);
 
     if (_currentIndex != null) {
@@ -900,16 +904,17 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     final visiblePlaylists = _playlists
         .where((p) => p.id != _defaultPlaylistId)
         .toList();
-    if (fromIndex < 0 || fromIndex >= visiblePlaylists.length || toIndex < 0) {
-      return;
+    if (visiblePlaylists.isEmpty) {
+      throw StateError('No playlists available to move');
     }
-    final boundedTo = toIndex.clamp(0, visiblePlaylists.length - 1);
-    if (fromIndex == boundedTo) {
+    _assertValidIndex(fromIndex, visiblePlaylists, 'fromIndex');
+    _assertValidIndex(toIndex, visiblePlaylists, 'toIndex');
+    if (fromIndex == toIndex) {
       return;
     }
     // Map user indices to internal indices
     final actualFromIdx = _playlists.indexOf(visiblePlaylists[fromIndex]);
-    final actualToIdx = _playlists.indexOf(visiblePlaylists[boundedTo]);
+    final actualToIdx = _playlists.indexOf(visiblePlaylists[toIndex]);
     if (actualFromIdx < 0 || actualToIdx < 0) {
       return;
     }
@@ -950,13 +955,36 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     await _syncActivePlaylistToPlaylists();
   }
 
+  /// Adds one track to queue (`__default__`) without changing active playlist.
+  Future<void> addQueueTrack(AudioTrack track) async {
+    await addQueueTracks(<AudioTrack>[track]);
+  }
+
+  /// Adds multiple tracks to queue (`__default__`) without changing active playlist.
+  Future<void> addQueueTracks(List<AudioTrack> tracks) async {
+    if (tracks.isEmpty) {
+      return;
+    }
+    await _ensureQueueExists();
+    if (_activePlaylistId == _defaultPlaylistId) {
+      await addTracks(tracks);
+      return;
+    }
+    final currentQueue = queue!;
+    await updatePlaylist(
+      _defaultPlaylistId,
+      items: List<AudioTrack>.from(currentQueue.items)..addAll(tracks),
+    );
+  }
+
   /// Inserts one track at [index] in active playlist.
   Future<void> insertTrack(int index, AudioTrack track) async {
     // Ensure we have an active playlist before inserting
     if (_activePlaylistId == null) {
       await _ensureActivePlaylist();
     }
-    final target = index.clamp(0, _activePlaylistTracks.length);
+    _assertValidInsertionIndex(index, _activePlaylistTracks.length, 'index');
+    final target = index;
     _activePlaylistTracks.insert(target, track);
     if (_currentIndex == null) {
       _currentIndex = 0;
@@ -978,11 +1006,10 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
 
   /// Removes the track at [index] from active playlist.
   Future<void> removeTrackAt(int index) async {
-    if (_activePlaylistId == null ||
-        index < 0 ||
-        index >= _activePlaylistTracks.length) {
-      return;
+    if (_activePlaylistId == null) {
+      await _ensureActivePlaylist();
     }
+    _assertValidIndex(index, _activePlaylistTracks, 'index');
     final wasPlayingNow = _isPlaying;
     final removedCurrent = _currentIndex == index;
     _activePlaylistTracks.removeAt(index);
@@ -1020,25 +1047,24 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
 
   /// Moves a track from [fromIndex] to [toIndex] in active playlist.
   Future<void> moveTrack(int fromIndex, int toIndex) async {
-    if (_activePlaylistId == null ||
-        fromIndex < 0 ||
-        fromIndex >= _activePlaylistTracks.length) {
-      return;
+    if (_activePlaylistId == null) {
+      await _ensureActivePlaylist();
     }
-    final boundedTo = toIndex.clamp(0, _activePlaylistTracks.length - 1);
-    if (fromIndex == boundedTo) {
+    _assertValidIndex(fromIndex, _activePlaylistTracks, 'fromIndex');
+    _assertValidIndex(toIndex, _activePlaylistTracks, 'toIndex');
+    if (fromIndex == toIndex) {
       return;
     }
     final moved = _activePlaylistTracks.removeAt(fromIndex);
-    _activePlaylistTracks.insert(boundedTo, moved);
+    _activePlaylistTracks.insert(toIndex, moved);
 
     if (_currentIndex != null) {
       var current = _currentIndex!;
       if (current == fromIndex) {
-        current = boundedTo;
-      } else if (fromIndex < current && boundedTo >= current) {
+        current = toIndex;
+      } else if (fromIndex < current && toIndex >= current) {
         current -= 1;
-      } else if (fromIndex > current && boundedTo <= current) {
+      } else if (fromIndex > current && toIndex <= current) {
         current += 1;
       }
       _currentIndex = current;
@@ -1070,15 +1096,56 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Removes one track by index from queue (`__default__`).
+  Future<void> removeQueueTrackAt(int index) async {
+    await _ensureQueueExists();
+    if (_activePlaylistId == _defaultPlaylistId) {
+      await removeTrackAt(index);
+      return;
+    }
+    final currentQueue = queue!;
+    _assertValidIndex(index, currentQueue.items, 'index');
+    final updated = List<AudioTrack>.from(currentQueue.items)..removeAt(index);
+    await updatePlaylist(_defaultPlaylistId, items: updated);
+  }
+
+  /// Moves one track inside queue (`__default__`).
+  Future<void> moveQueueTrack(int fromIndex, int toIndex) async {
+    await _ensureQueueExists();
+    if (_activePlaylistId == _defaultPlaylistId) {
+      await moveTrack(fromIndex, toIndex);
+      return;
+    }
+    final currentQueue = queue!;
+    _assertValidIndex(fromIndex, currentQueue.items, 'fromIndex');
+    _assertValidIndex(toIndex, currentQueue.items, 'toIndex');
+    if (fromIndex == toIndex) {
+      return;
+    }
+    final updated = List<AudioTrack>.from(currentQueue.items);
+    final moved = updated.removeAt(fromIndex);
+    updated.insert(toIndex, moved);
+    await updatePlaylist(_defaultPlaylistId, items: updated);
+  }
+
+  /// Clears queue (`__default__`) items.
+  Future<void> clearQueue() async {
+    await _ensureQueueExists();
+    if (_activePlaylistId == _defaultPlaylistId) {
+      await clearPlaylist();
+      return;
+    }
+    await updatePlaylist(_defaultPlaylistId, items: const <AudioTrack>[]);
+  }
+
   /// Switches to track at [index] in active playlist and starts playback.
   ///
   /// Optional [position] seeks after loading.
   Future<void> playAt(int index, {Duration? position}) async {
-    if (_activePlaylistId == null ||
-        index < 0 ||
-        index >= _activePlaylistTracks.length) {
-      return;
+    if (_activePlaylistId == null) {
+      await _ensureActivePlaylist();
     }
+    _assertValidIndex(index, _activePlaylistTracks, 'index');
     _currentIndex = index;
     _rebuildPlayOrder(keepCurrentAtFront: _shuffleEnabled);
     await _loadCurrentTrack(autoPlay: true, position: position);
@@ -1247,7 +1314,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
       // Create and activate default playlist
       final playlist = Playlist(
         id: _defaultPlaylistId,
-        name: 'Default',
+        name: 'Queue',
         items: const <AudioTrack>[],
       );
       _playlists.add(playlist);
@@ -1259,6 +1326,29 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
       _emitPlaylistState();
       notifyListeners();
     }
+  }
+
+  Future<void> _ensureQueueExists() async {
+    if (_playlists.any((p) => p.id == _defaultPlaylistId)) {
+      return;
+    }
+    _playlists.add(
+      const Playlist(
+        id: _defaultPlaylistId,
+        name: 'Queue',
+        items: <AudioTrack>[],
+      ),
+    );
+    _emitPlaylistState();
+    notifyListeners();
+  }
+
+  void _assertValidIndex(int index, List<dynamic> items, String name) {
+    RangeError.checkValidIndex(index, items, name);
+  }
+
+  void _assertValidInsertionIndex(int index, int length, String name) {
+    RangeError.checkValueInInterval(index, 0, length, name);
   }
 
   void _syncLegacySingleTrackPlaylist(String path, {Duration? duration}) {
@@ -1349,7 +1439,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
       playlists: List<Playlist>.unmodifiable(visiblePlaylists),
       shuffleEnabled: _shuffleEnabled,
       repeatMode: _repeatMode,
-      activePlaylistId: _activePlaylistId,
+      activePlaylist: activePlaylist,
       currentIndex: _currentIndex,
       track: currentTrack,
     );

@@ -106,7 +106,7 @@ void main() {
       const name = 'Active Playlist';
       await controller.createPlaylist(id, name, setAsActive: true);
 
-      expect(controller.playlistState.activePlaylistId, id);
+      expect(controller.playlistState.activePlaylist?.id, id);
       expect(controller.activePlaylist?.id, id);
     });
 
@@ -170,11 +170,11 @@ void main() {
         await controller.createPlaylist('pl1', 'Playlist 1', setAsActive: true);
         await controller.createPlaylist('pl2', 'Playlist 2');
 
-        expect(controller.playlistState.activePlaylistId, 'pl1');
+        expect(controller.playlistState.activePlaylist?.id, 'pl1');
 
         await controller.deletePlaylist('pl1');
 
-        expect(controller.playlistState.activePlaylistId, 'pl2');
+        expect(controller.playlistState.activePlaylist?.id, 'pl2');
         expect(controller.playlists, hasLength(1));
       },
     );
@@ -190,12 +190,12 @@ void main() {
       await controller.createPlaylist('pl2', 'Playlist 2', items: [track2]);
 
       await controller.setActivePlaylistById('pl1');
-      expect(controller.playlistState.activePlaylistId, 'pl1');
+      expect(controller.playlistState.activePlaylist?.id, 'pl1');
       expect(controller.playlist, hasLength(1));
       expect(controller.playlist.first.id, 't1');
 
       await controller.setActivePlaylistById('pl2');
-      expect(controller.playlistState.activePlaylistId, 'pl2');
+      expect(controller.playlistState.activePlaylist?.id, 'pl2');
       expect(controller.playlist, hasLength(1));
       expect(controller.playlist.first.id, 't2');
     });
@@ -257,12 +257,84 @@ void main() {
         'Only Playlist',
         setAsActive: true,
       );
-      expect(controller.playlistState.activePlaylistId, 'only');
+      expect(controller.playlistState.activePlaylist?.id, 'only');
 
       await controller.deletePlaylist('only');
 
       expect(controller.playlists, isEmpty);
-      expect(controller.playlistState.activePlaylistId, isNull);
+      expect(controller.playlistState.activePlaylist, isNull);
+    });
+
+    test('queue operations add/remove/move/clear tracks', () async {
+      final controller = AudioVisualizerPlayerController();
+      addTearDown(controller.dispose);
+
+      const q1 = AudioTrack(id: 'q1', uri: 'queue-1.mp3');
+      const q2 = AudioTrack(id: 'q2', uri: 'queue-2.mp3');
+      const q3 = AudioTrack(id: 'q3', uri: 'queue-3.mp3');
+
+      await controller.addQueueTrack(q1);
+      await controller.addQueueTracks([q2, q3]);
+
+      expect(controller.queue, isNotNull);
+      expect(controller.queueTracks.map((t) => t.id).toList(), [
+        'q1',
+        'q2',
+        'q3',
+      ]);
+      expect(controller.playlists, isEmpty); // queue is not user-visible
+
+      await controller.moveQueueTrack(2, 0);
+      expect(controller.queueTracks.map((t) => t.id).toList(), [
+        'q3',
+        'q1',
+        'q2',
+      ]);
+
+      await controller.removeQueueTrackAt(1);
+      expect(controller.queueTracks.map((t) => t.id).toList(), ['q3', 'q2']);
+
+      await controller.clearQueue();
+      expect(controller.queueTracks, isEmpty);
+    });
+
+    test('index out of range throws for index-based APIs', () async {
+      final controller = AudioVisualizerPlayerController();
+      addTearDown(controller.dispose);
+
+      await controller.createPlaylist('pl1', 'Playlist 1');
+
+      await expectLater(
+        () => controller.movePlaylist(0, 1),
+        throwsA(isA<RangeError>()),
+      );
+
+      await controller.setActivePlaylistById('pl1');
+
+      await expectLater(
+        () => controller.insertTrack(-1, const AudioTrack(id: 't1', uri: 'u1')),
+        throwsA(isA<RangeError>()),
+      );
+      await expectLater(
+        () => controller.removeTrackAt(0),
+        throwsA(isA<RangeError>()),
+      );
+      await expectLater(() => controller.playAt(0), throwsA(isA<RangeError>()));
+
+      await controller.addTrack(const AudioTrack(id: 't2', uri: 'u2'));
+
+      await expectLater(
+        () => controller.moveTrack(0, 2),
+        throwsA(isA<RangeError>()),
+      );
+      await expectLater(
+        () => controller.removeQueueTrackAt(5),
+        throwsA(isA<RangeError>()),
+      );
+      await expectLater(
+        () => controller.moveQueueTrack(0, 5),
+        throwsA(isA<RangeError>()),
+      );
     });
   });
 }

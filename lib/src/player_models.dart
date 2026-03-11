@@ -85,8 +85,6 @@ enum PlayerState {
   error,
 }
 
-
-
 class PlayerControllerState {
   const PlayerControllerState({
     required this.position,
@@ -96,7 +94,7 @@ class PlayerControllerState {
     required this.playlists,
     required this.shuffleEnabled,
     required this.repeatMode,
-    this.activePlaylistId,
+    this.activePlaylist,
     this.currentIndex,
     this.track,
   });
@@ -122,8 +120,8 @@ class PlayerControllerState {
   /// Active repeat mode.
   final RepeatMode repeatMode;
 
-  /// ID of currently active playlist, or `null` if none selected.
-  final String? activePlaylistId;
+  /// Currently active playlist, or `null` if none selected.
+  final Playlist? activePlaylist;
 
   /// Current index in active playlist, or `null` if no active playlist or nothing selected.
   final int? currentIndex;
@@ -133,16 +131,6 @@ class PlayerControllerState {
 
   /// Alias for compatibility with old tests/UI
   AudioTrack? get currentTrack => track;
-
-  /// Currently active playlist, or `null` if none selected.
-  Playlist? get activePlaylist {
-    if (activePlaylistId == null) return null;
-    try {
-      return playlists.firstWhere((p) => p.id == activePlaylistId);
-    } catch (e) {
-      return null;
-    }
-  }
 
   /// Current tracks in active playlist.
   List<AudioTrack> get items => activePlaylist?.items ?? const <AudioTrack>[];

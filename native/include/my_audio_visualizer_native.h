@@ -27,6 +27,8 @@ MAV_EXPORT void mav_unload_audio_file(void);
 MAV_EXPORT int32_t mav_get_audio_duration_ms(void);
 MAV_EXPORT int32_t mav_compute_spectrum_at_ms(int32_t position_ms, float* out_magnitudes, int32_t out_count);
 MAV_EXPORT int32_t mav_compute_compressed_bands_at_ms(int32_t position_ms, float* out_bands, int32_t band_count);
+MAV_EXPORT int32_t mav_get_whole_track_waveform(const char* file_path, float* out_buffer, int32_t out_count, int32_t use_fast_mode);
+
 MAV_EXPORT int32_t mav_fill_test_signal(float* out_samples, int32_t sample_count, float phase_step);
 MAV_EXPORT int32_t mav_compute_spectrum(const float* input_samples, int32_t sample_count, float* out_magnitudes, int32_t out_count);
 MAV_EXPORT int32_t mav_simd_width(void);

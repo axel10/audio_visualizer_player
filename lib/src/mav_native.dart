@@ -42,6 +42,11 @@ typedef _ComputeSpectrumAtMsNative =
     Int32 Function(Int32, Pointer<Float>, Int32);
 typedef _ComputeSpectrumAtMsDart = int Function(int, Pointer<Float>, int);
 
+typedef _GetWholeTrackWaveformNative =
+    Int32 Function(Pointer<Char>, Pointer<Float>, Int32, Int32);
+typedef _GetWholeTrackWaveformDart =
+    int Function(Pointer<Char>, Pointer<Float>, int, int);
+
 /// Low-level native FFI bindings for audio loading, playback, and FFT queries.
 ///
 /// Most apps should use [AudioVisualizerPlayerController] instead.
@@ -93,7 +98,12 @@ class MavNative {
       _computeBandsAtMs = lib
           .lookupFunction<_ComputeBandsAtMsNative, _ComputeBandsAtMsDart>(
             'mav_compute_compressed_bands_at_ms',
-          );
+          ),
+      _getWholeTrackWaveform = lib
+          .lookupFunction<
+            _GetWholeTrackWaveformNative,
+            _GetWholeTrackWaveformDart
+          >('mav_get_whole_track_waveform');
   final _CreateFftDart _createFft;
   final _DisposeFftDart _disposeFft;
   final _LoadAudioFileDart _loadAudioFile;
@@ -107,6 +117,7 @@ class MavNative {
   final _GetDurationDart _getDurationMs;
   final _ComputeSpectrumAtMsDart _computeSpectrumAtMs;
   final _ComputeBandsAtMsDart _computeBandsAtMs;
+  final _GetWholeTrackWaveformDart _getWholeTrackWaveform;
 
   /// Opens platform dynamic library and returns an FFI binding instance.
   static MavNative open() {
@@ -206,6 +217,32 @@ class MavNative {
         (i) => i < count ? list[i].clamp(0.0, 1.0).toDouble() : 0.0,
       );
     } finally {
+      calloc.free(out);
+    }
+  }
+
+  /// Calculates the whole track waveform natively.
+  List<double> getWholeTrackWaveform({
+    required String filePath,
+    required int outCount,
+    bool useFastMode = true,
+  }) {
+    final nativePath = filePath.toNativeUtf8();
+    final out = calloc<Float>(outCount);
+    try {
+      final count = _getWholeTrackWaveform(
+        nativePath.cast(),
+        out,
+        outCount,
+        useFastMode ? 1 : 0,
+      );
+      if (count <= 0) {
+        return const [];
+      }
+      final list = out.asTypedList(count);
+      return List<double>.generate(count, (i) => list[i].toDouble());
+    } finally {
+      calloc.free(nativePath);
       calloc.free(out);
     }
   }

@@ -541,6 +541,36 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     await setFftEnabled(!_fftEnabled);
   }
 
+  /// Calculates the whole track waveform for the given [filePath].
+  ///
+  /// The [outCount] parameter specifies how many normalized magnitude samples (0.0 to 1.0)
+  /// you want returned. This is executed in a background isolate so it will never freeze the UI.
+  /// Uses [useFastMode] (default true) to read sparsely for near-instant rendering.
+  Future<List<double>> getWholeTrackWaveform({
+    required String filePath,
+    required int outCount,
+    bool useFastMode = true,
+  }) async {
+    if (!isWindows) {
+      // Currently only fully implemented and optimized in C++ for Windows.
+      // If Android implementation is added, bridge it properly here.
+      return [];
+    }
+
+    // compute allows background execution of heavy synchronous logic on all supported platforms.
+    return await compute((_) {
+      final native = MavNative.open();
+      // Ensure FFT environment uses consistent sizes. Though not strictly necessary
+      // for the independent waveform API, initializing it properly is safe.
+      native.createFft(2048);
+      return native.getWholeTrackWaveform(
+        filePath: filePath,
+        outCount: outCount,
+        useFastMode: useFastMode,
+      );
+    }, null);
+  }
+
   Future<int> _androidCallInt(
     String method, [
     Map<String, dynamic>? args,

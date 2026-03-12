@@ -86,7 +86,11 @@ MFStreamInstance::MFStreamInstance(MFStreamSource* parent) : mParent(parent), mE
     }
     
     ComPtr<IMFMediaType> type;
-    MFCreateMediaType(&type);
+    hr = MFCreateMediaType(&type);
+    if (FAILED(hr)) {
+        mEnded = true;
+        return;
+    }
     type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
     type->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_Float);
     hr = mReader->SetCurrentMediaType((DWORD)MF_SOURCE_READER_FIRST_AUDIO_STREAM, nullptr, type.Get());
@@ -200,7 +204,8 @@ int MFStreamSource::load(const char* file_path) {
     if (FAILED(hr)) return -2;
     
     ComPtr<IMFMediaType> type;
-    MFCreateMediaType(&type);
+    hr = MFCreateMediaType(&type);
+    if (FAILED(hr)) return -3;
     type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
     type->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_Float);
     hr = reader->SetCurrentMediaType((DWORD)MF_SOURCE_READER_FIRST_AUDIO_STREAM, nullptr, type.Get());
@@ -209,7 +214,7 @@ int MFStreamSource::load(const char* file_path) {
     ComPtr<IMFMediaType> current_type;
     hr = reader->GetCurrentMediaType((DWORD)MF_SOURCE_READER_FIRST_AUDIO_STREAM, &current_type);
     UINT32 channels = 0, sample_rate = 0;
-    if (SUCCEEDED(hr)) {
+    if (SUCCEEDED(hr) && current_type) {
         current_type->GetUINT32(MF_MT_AUDIO_NUM_CHANNELS, &channels);
         current_type->GetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, &sample_rate);
     }
@@ -446,6 +451,10 @@ MAV_EXPORT int32_t mav_compute_compressed_bands_at_ms(int32_t position_ms, float
     if (g_smoothed_band_count != band_count) {
         if (g_smoothed_bands) free(g_smoothed_bands);
         g_smoothed_bands = (float*)calloc((size_t)band_count, sizeof(float));
+        if (!g_smoothed_bands) {
+            g_smoothed_band_count = 0;
+            return -21; // Return error code for allocation failure
+        }
         g_smoothed_band_count = band_count;
     }
     
@@ -483,6 +492,166 @@ MAV_EXPORT int32_t mav_compute_compressed_bands_at_ms(int32_t position_ms, float
     return band_count;
 #else
     return -20;
+#endif
+}
+
+MAV_EXPORT int32_t mav_get_whole_track_waveform(const char* file_path, float* out_buffer, int32_t out_count, int32_t use_fast_mode) {
+    // Avoid blocking other operations by explicitly holding the mutex for a shorter duration or making it local to operations, 
+    // but here we just lock it to avoid any _WIN32 races, though IMFSourceReader is quite independent. 
+    std::lock_guard<std::recursive_mutex> lock(g_mav_mutex);
+#ifdef _WIN32
+    if (!file_path || !out_buffer || out_count <= 0) return -1;
+    EnsureMFInit();
+
+    int wide_len = MultiByteToWideChar(CP_UTF8, 0, file_path, -1, nullptr, 0);
+    if (wide_len <= 0) return -1;
+    std::wstring path(wide_len, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, file_path, -1, &path[0], wide_len);
+    if (!path.empty() && path.back() == L'\0') {
+        path.pop_back();
+    }
+
+    ComPtr<IMFSourceReader> reader;
+    HRESULT hr = MFCreateSourceReaderFromURL(path.c_str(), nullptr, &reader);
+    if (FAILED(hr)) return -2;
+
+    ComPtr<IMFMediaType> type;
+    hr = MFCreateMediaType(&type);
+    if (FAILED(hr)) return -3;
+    type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+    type->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_Float);
+    hr = reader->SetCurrentMediaType((DWORD)MF_SOURCE_READER_FIRST_AUDIO_STREAM, nullptr, type.Get());
+    if (FAILED(hr)) return -3;
+
+    reader->SetStreamSelection((DWORD)MF_SOURCE_READER_ALL_STREAMS, FALSE);
+    reader->SetStreamSelection((DWORD)MF_SOURCE_READER_FIRST_AUDIO_STREAM, TRUE);
+
+    // Get duration
+    PROPVARIANT var;
+    PropVariantInit(&var);
+    hr = reader->GetPresentationAttribute(MF_SOURCE_READER_MEDIASOURCE, MF_PD_DURATION, &var);
+    uint64_t duration_100ns = 0;
+    if (SUCCEEDED(hr) && var.vt == VT_UI8) {
+        duration_100ns = var.uhVal.QuadPart;
+    }
+    PropVariantClear(&var);
+
+    if (duration_100ns == 0) return -4;
+
+    memset(out_buffer, 0, out_count * sizeof(float));
+
+    if (use_fast_mode != 0) {
+        // Fast mode: seek to points and read a single sample block
+        int64_t step_100ns = duration_100ns / out_count;
+        for (int32_t i = 0; i < out_count; ++i) {
+            PROPVARIANT varSeek;
+            PropVariantInit(&varSeek);
+            varSeek.vt = VT_I8;
+            varSeek.hVal.QuadPart = i * step_100ns;
+            hr = reader->SetCurrentPosition(GUID_NULL, varSeek);
+            PropVariantClear(&varSeek);
+            if (FAILED(hr)) continue;
+
+            DWORD flags = 0;
+            ComPtr<IMFSample> sample;
+            hr = reader->ReadSample((DWORD)MF_SOURCE_READER_FIRST_AUDIO_STREAM, 0, nullptr, &flags, nullptr, &sample);
+            if (SUCCEEDED(hr) && sample) {
+                ComPtr<IMFMediaBuffer> buffer;
+                if (SUCCEEDED(sample->ConvertToContiguousBuffer(&buffer))) {
+                    BYTE* data = nullptr;
+                    DWORD len = 0;
+                    if (SUCCEEDED(buffer->Lock(&data, nullptr, &len))) {
+                        float* f_data = (float*)data;
+                        size_t numFloats = len / sizeof(float);
+                        float peak = 0.0f;
+                        for (size_t k = 0; k < numFloats; ++k) {
+                            float v = fabsf(f_data[k]);
+                            if (v > peak) peak = v;
+                        }
+                        out_buffer[i] = peak;
+                        buffer->Unlock();
+                    }
+                }
+            }
+        }
+    } else {
+        // Accurate mode (sequential decode)
+        ComPtr<IMFMediaType> current_type;
+        hr = reader->GetCurrentMediaType((DWORD)MF_SOURCE_READER_FIRST_AUDIO_STREAM, &current_type);
+        UINT32 sample_rate = 44100;
+        UINT32 num_channels = 2;
+        if (SUCCEEDED(hr) && current_type) {
+            current_type->GetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, &sample_rate);
+            current_type->GetUINT32(MF_MT_AUDIO_NUM_CHANNELS, &num_channels);
+        }
+        
+        uint64_t total_samples_est = (duration_100ns * sample_rate) / 10000000ULL;
+        uint64_t samples_per_bucket = total_samples_est / out_count;
+        if (samples_per_bucket == 0) samples_per_bucket = 1;
+
+        uint64_t current_sample = 0;
+        int32_t current_bucket = 0;
+        float current_peak = 0.0f;
+
+        bool ended = false;
+        while (!ended && current_bucket < out_count) {
+            DWORD flags = 0;
+            ComPtr<IMFSample> sample;
+            hr = reader->ReadSample((DWORD)MF_SOURCE_READER_FIRST_AUDIO_STREAM, 0, nullptr, &flags, nullptr, &sample);
+            if (FAILED(hr) || (flags & MF_SOURCE_READERF_ENDOFSTREAM)) {
+                ended = true;
+                break;
+            }
+            if (!sample) continue;
+
+            ComPtr<IMFMediaBuffer> buffer;
+            if (SUCCEEDED(sample->ConvertToContiguousBuffer(&buffer))) {
+                BYTE* data = nullptr;
+                DWORD len = 0;
+                if (SUCCEEDED(buffer->Lock(&data, nullptr, &len))) {
+                    float* f_data = (float*)data;
+                    size_t numFrames = (len / sizeof(float)) / num_channels;
+                    
+                    for (size_t f = 0; f < numFrames; ++f) {
+                        float max_ch = 0.0f;
+                        for (size_t c = 0; c < num_channels; ++c) {
+                            float v = fabsf(f_data[f * num_channels + c]);
+                            if (v > max_ch) max_ch = v;
+                        }
+                        if (max_ch > current_peak) current_peak = max_ch;
+
+                        current_sample++;
+                        if (current_sample >= (current_bucket + 1) * samples_per_bucket) {
+                            if (current_bucket < out_count) {
+                                out_buffer[current_bucket] = current_peak;
+                                current_bucket++;
+                                current_peak = 0.0f;
+                            }
+                        }
+                    }
+                    buffer->Unlock();
+                }
+            }
+        }
+        if (current_bucket < out_count && current_peak > 0.0f) {
+            out_buffer[current_bucket] = current_peak;
+        }
+    }
+
+    // Normalize output relative to finding the overall maximum (optional but helpful for visualizer)
+    float max_all = 0.0f;
+    for (int32_t i = 0; i < out_count; ++i) {
+        if (out_buffer[i] > max_all) max_all = out_buffer[i];
+    }
+    if (max_all > 0.0f) {
+        for (int32_t i = 0; i < out_count; ++i) {
+            out_buffer[i] /= max_all;
+        }
+    }
+
+    return out_count;
+#else
+    return -999;
 #endif
 }
 

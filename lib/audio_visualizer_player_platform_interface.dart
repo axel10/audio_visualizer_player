@@ -8,7 +8,8 @@ abstract class AudioVisualizerPlayerPlatform extends PlatformInterface {
 
   static final Object _token = Object();
 
-  static AudioVisualizerPlayerPlatform _instance = MethodChannelAudioVisualizerPlayer();
+  static AudioVisualizerPlayerPlatform _instance =
+      MethodChannelAudioVisualizerPlayer();
 
   /// The default instance of [AudioVisualizerPlayerPlatform] to use.
   ///

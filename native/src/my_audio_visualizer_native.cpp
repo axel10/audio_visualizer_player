@@ -241,6 +241,7 @@ static SoLoud::Soloud g_soloud;
 static bool g_soloud_inited = false;
 static MFStreamSource* g_current_source = nullptr;
 static int g_current_handle = 0;
+static float g_current_volume = 1.0f;
 static float* g_smoothed_bands = nullptr;
 static int32_t g_smoothed_band_count = 0;
 
@@ -320,7 +321,7 @@ MAV_EXPORT int32_t mav_player_play(void) {
         return 0;
     }
     
-    g_current_handle = g_soloud.play(*g_current_source);
+    g_current_handle = g_soloud.play(*g_current_source, g_current_volume);
     return 0;
 #else
     return -1;
@@ -383,6 +384,7 @@ MAV_EXPORT int32_t mav_player_set_volume(float volume) {
     std::lock_guard<std::recursive_mutex> lock(g_mav_mutex);
 #ifdef _WIN32
     EnsureSoloudInited();
+    g_current_volume = volume;
     if (g_soloud.isValidVoiceHandle(g_current_handle)) {
         g_soloud.setVolume(g_current_handle, volume);
     }

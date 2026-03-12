@@ -244,11 +244,10 @@ SoLoud::AudioSourceInstance* MFStreamSource::createInstance() {
 static std::recursive_mutex g_mav_mutex;
 static SoLoud::Soloud g_soloud;
 static bool g_soloud_inited = false;
-static MFStreamSource* g_current_source = nullptr;
+static std::unique_ptr<MFStreamSource> g_current_source;
 static int g_current_handle = 0;
 static float g_current_volume = 1.0f;
-static float* g_smoothed_bands = nullptr;
-static int32_t g_smoothed_band_count = 0;
+static std::vector<float> g_smoothed_bands;
 
 static void EnsureSoloudInited() {
     if (!g_soloud_inited) {
@@ -269,20 +268,14 @@ MAV_EXPORT int32_t mav_create_fft(int32_t fft_size) {
 MAV_EXPORT void mav_dispose_fft(void) {
     std::lock_guard<std::recursive_mutex> lock(g_mav_mutex);
 #ifdef _WIN32
-    if (g_smoothed_bands != nullptr) {
-        free(g_smoothed_bands);
-        g_smoothed_bands = nullptr;
-    }
-    g_smoothed_band_count = 0;
+    g_smoothed_bands.clear();
+    g_smoothed_bands.shrink_to_fit();
     
     if (g_soloud_inited) {
         g_soloud.deinit();
         g_soloud_inited = false;
     }
-    if (g_current_source) {
-        delete g_current_source;
-        g_current_source = nullptr;
-    }
+    g_current_source.reset();
     g_current_handle = 0;
 #endif
 }
@@ -293,16 +286,11 @@ MAV_EXPORT int32_t mav_load_audio_file(const char* file_path) {
     if (!file_path || file_path[0] == '\0') return -1;
     EnsureSoloudInited();
     
-    if (g_current_source) {
-        g_soloud.stopAll();
-        delete g_current_source;
-        g_current_source = nullptr;
-    }
+    g_soloud.stopAll();
+    g_current_source = std::make_unique<MFStreamSource>();
     
-    g_current_source = new MFStreamSource();
     if (g_current_source->load(file_path) != 0) {
-        delete g_current_source;
-        g_current_source = nullptr;
+        g_current_source.reset();
         return -2;
     }
     return 0;
@@ -404,10 +392,7 @@ MAV_EXPORT void mav_unload_audio_file(void) {
 #ifdef _WIN32
     EnsureSoloudInited();
     g_soloud.stopAll();
-    if (g_current_source) {
-        delete g_current_source;
-        g_current_source = nullptr;
-    }
+    g_current_source.reset();
     g_current_handle = 0;
 #endif
 }
@@ -448,14 +433,8 @@ MAV_EXPORT int32_t mav_compute_compressed_bands_at_ms(int32_t position_ms, float
     EnsureSoloudInited();
     if (!out_bands || band_count <= 0) return -20;
     
-    if (g_smoothed_band_count != band_count) {
-        if (g_smoothed_bands) free(g_smoothed_bands);
-        g_smoothed_bands = (float*)calloc((size_t)band_count, sizeof(float));
-        if (!g_smoothed_bands) {
-            g_smoothed_band_count = 0;
-            return -21; // Return error code for allocation failure
-        }
-        g_smoothed_band_count = band_count;
+    if (g_smoothed_bands.size() != static_cast<size_t>(band_count)) {
+        g_smoothed_bands.assign(band_count, 0.0f);
     }
     
     float* fft = g_soloud.calcFFT();

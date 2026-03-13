@@ -33,6 +33,9 @@ typedef _PlayerGetPositionMsDart = int Function();
 typedef _PlayerIsPlayingNative = Int32 Function();
 typedef _PlayerIsPlayingDart = int Function();
 
+typedef _PlayerIsStreamEndedNative = Int32 Function();
+typedef _PlayerIsStreamEndedDart = int Function();
+
 typedef _SetVolumeNative = Int32 Function(Float);
 typedef _SetVolumeDart = int Function(double);
 
@@ -85,6 +88,10 @@ class MavNative {
           .lookupFunction<_PlayerIsPlayingNative, _PlayerIsPlayingDart>(
             'mav_player_is_playing',
           ),
+      _playerIsStreamEnded = lib
+          .lookupFunction<_PlayerIsStreamEndedNative, _PlayerIsStreamEndedDart>(
+            'mav_player_is_stream_ended',
+          ),
       _setVolume = lib.lookupFunction<_SetVolumeNative, _SetVolumeDart>(
         'mav_player_set_volume',
       ),
@@ -113,6 +120,7 @@ class MavNative {
   final _PlayerSeekMsDart _playerSeekMs;
   final _PlayerGetPositionMsDart _playerGetPositionMs;
   final _PlayerIsPlayingDart _playerIsPlaying;
+  final _PlayerIsStreamEndedDart _playerIsStreamEnded;
   final _SetVolumeDart _setVolume;
   final _GetDurationDart _getDurationMs;
   final _ComputeSpectrumAtMsDart _computeSpectrumAtMs;
@@ -171,6 +179,9 @@ class MavNative {
 
   /// Returns whether native player is currently playing.
   bool playerIsPlaying() => _playerIsPlaying() == 1;
+
+  /// Returns whether the audio stream has reached the end.
+  bool playerIsStreamEnded() => _playerIsStreamEnded() == 1;
 
   /// Sets output volume in range `0..1`.
   int playerSetVolume(double volume) => _setVolume(volume);

@@ -22,6 +22,7 @@ MAV_EXPORT int32_t mav_player_pause(void);
 MAV_EXPORT int32_t mav_player_seek_ms(int32_t position_ms);
 MAV_EXPORT int32_t mav_player_get_position_ms(void);
 MAV_EXPORT int32_t mav_player_is_playing(void);
+MAV_EXPORT int32_t mav_player_is_stream_ended(void);
 MAV_EXPORT int32_t mav_player_set_volume(float volume);
 MAV_EXPORT void mav_unload_audio_file(void);
 MAV_EXPORT int32_t mav_get_audio_duration_ms(void);

@@ -18,23 +18,17 @@ set(PLUGIN_NAME "audio_visualizer_player_plugin")
 
 # Any new source files that you add to the plugin should be added here.
 set(NATIVE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../native")
-set(SOLOUD_DIR "${NATIVE_DIR}/third_part/soloud")
 
-file(GLOB SOLOUD_SOURCES
-  "${SOLOUD_DIR}/src/core/*.cpp"
-  "${SOLOUD_DIR}/src/audiosource/wav/*.cpp"
-  "${SOLOUD_DIR}/src/audiosource/wav/*.c"
-  "${SOLOUD_DIR}/src/filter/*.cpp"
-  "${SOLOUD_DIR}/src/backend/wasapi/*.cpp"
+# pffft sources
+list(APPEND PFFFT_SOURCES
+  "${NATIVE_DIR}/third_part/pffft.c"
 )
-
-set_source_files_properties(${SOLOUD_SOURCES} PROPERTIES LANGUAGE CXX)
 
 list(APPEND PLUGIN_SOURCES
   "audio_visualizer_player_plugin.cpp"
   "audio_visualizer_player_plugin.h"
   "${NATIVE_DIR}/src/my_audio_visualizer_native.cpp"
-  ${SOLOUD_SOURCES}
+  ${PFFFT_SOURCES}
 )
 
 # Define the plugin library target. Its name must not be changed (see comment
@@ -44,9 +38,6 @@ add_library(${PLUGIN_NAME} SHARED
   "audio_visualizer_player_plugin_c_api.cpp"
   ${PLUGIN_SOURCES}
 )
-
-target_include_directories(${PLUGIN_NAME} PRIVATE "${SOLOUD_DIR}/include")
-target_compile_definitions(${PLUGIN_NAME} PRIVATE WITH_WASAPI)
 
 # Apply a standard set of build settings that are configured in the
 # application-level CMakeLists.txt. This can be removed for plugins that want
@@ -77,12 +68,9 @@ target_include_directories(${PLUGIN_NAME} PRIVATE
 target_link_libraries(${PLUGIN_NAME} PRIVATE 
   flutter 
   flutter_wrapper_plugin
-  winmm 
-  ole32 
-  avrt
+  ole32
   mfplat
   mfreadwrite
-  mf
   mfuuid
   propsys
 )

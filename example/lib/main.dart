@@ -57,7 +57,8 @@ class _VisualizerDemoPageState extends State<VisualizerDemoPage> {
       ),
     );
     _controller.initialize();
-    _optimizedSub = _controller.optimizedFftStream.listen((frame) {
+    _optimizedSub = _controller.rawFftStream.listen((frame) {
+      // _optimizedSub = _controller.optimizedFftStream.listen((frame) {
       if (!mounted) {
         return;
       }
@@ -252,7 +253,7 @@ class DemoSpectrumPainter extends CustomPainter {
     if (bands.isEmpty) {
       return;
     }
-    // debugPrint(bands.toString());
+    debugPrint(bands.toString());
     const safeTop = 6.0;
     const safeBottom = 6.0;
     const gap = 2.0;

@@ -3,6 +3,7 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  audio_decoder
   audio_visualizer_player
   desktop_drop
   permission_handler_windows

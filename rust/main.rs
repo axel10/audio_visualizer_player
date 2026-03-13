@@ -1,8 +1,8 @@
 use rodio::{source::Source, Decoder};
+use realfft::{num_complex::Complex, RealFftPlanner, RealToComplex};
 use std::io::BufReader;
 use std::time::Duration;
 use std::{fs::File, num::NonZero};
-use rustfft::{num_complex::Complex, FftPlanner};
 const FFT_SIZE: usize = 1024;
 use std::sync::Arc;
 
@@ -11,8 +11,9 @@ where
     S: Source<Item = f32>,
 {
     inner: S,
-    fft: Arc<dyn rustfft::Fft<f32>>,
-    buffer: Vec<Complex<f32>>,
+    fft: Arc<dyn RealToComplex<f32>>,
+    input_buffer: Vec<f32>,
+    output_buffer: Vec<Complex<f32>>,
     index: usize,
 }
 
@@ -21,22 +22,29 @@ where
     S: Source<Item = f32>,
 {
     fn new(inner: S) -> Self {
-        let mut planner = FftPlanner::<f32>::new();
+        let mut planner = RealFftPlanner::<f32>::new();
         let fft = planner.plan_fft_forward(FFT_SIZE);
 
         Self {
             inner,
+            input_buffer: fft.make_input_vec(),
+            output_buffer: fft.make_output_vec(),
             fft,
-            buffer: vec![Complex { re: 0.0, im: 0.0 }; FFT_SIZE],
             index: 0,
         }
     }
 
     fn compute_fft(&mut self) {
-        self.fft.process(&mut self.buffer);
+        if self
+            .fft
+            .process(&mut self.input_buffer, &mut self.output_buffer)
+            .is_err()
+        {
+            return;
+        }
 
         let spectrum: Vec<f32> = self
-            .buffer
+            .output_buffer
             .iter()
             .take(FFT_SIZE / 2)
             .map(|c| (c.re * c.re + c.im * c.im).sqrt())
@@ -55,8 +63,7 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         let sample = self.inner.next()?;
 
-        self.buffer[self.index].re = sample;
-        self.buffer[self.index].im = 0.0;
+        self.input_buffer[self.index] = sample;
 
         self.index += 1;
 

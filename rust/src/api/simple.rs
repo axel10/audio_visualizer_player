@@ -1,5 +1,5 @@
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Source};
-use rustfft::{num_complex::Complex, Fft, FftPlanner};
+use realfft::{num_complex::Complex, RealFftPlanner, RealToComplex};
 use std::fs::File;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -131,8 +131,9 @@ where
     S: Source<Item = f32>,
 {
     inner: S,
-    fft: Arc<dyn Fft<f32>>,
-    buffer: Vec<Complex<f32>>,
+    fft: Arc<dyn RealToComplex<f32>>,
+    input_buffer: Vec<f32>,
+    output_buffer: Vec<Complex<f32>>,
     index: usize,
     latest_fft: Arc<Mutex<Vec<f32>>>,
 }
@@ -142,25 +143,32 @@ where
     S: Source<Item = f32>,
 {
     fn new(inner: S, latest_fft: Arc<Mutex<Vec<f32>>>) -> Self {
-        let mut planner = FftPlanner::<f32>::new();
+        let mut planner = RealFftPlanner::<f32>::new();
         let fft = planner.plan_fft_forward(FFT_SIZE);
 
         Self {
             inner,
+            input_buffer: fft.make_input_vec(),
+            output_buffer: fft.make_output_vec(),
             fft,
-            buffer: vec![Complex { re: 0.0, im: 0.0 }; FFT_SIZE],
             index: 0,
             latest_fft,
         }
     }
 
     fn compute_fft(&mut self) {
-        self.fft.process(&mut self.buffer);
+        if self
+            .fft
+            .process(&mut self.input_buffer, &mut self.output_buffer)
+            .is_err()
+        {
+            return;
+        }
 
         let magnitudes: Vec<f32> = self
-            .buffer
+            .output_buffer
             .iter()
-            .take(FFT_SIZE / 2)
+            .take(RAW_FFT_BINS)
             .map(|c| (c.re * c.re + c.im * c.im).sqrt())
             .collect();
 
@@ -179,8 +187,7 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         let sample = self.inner.next()?;
 
-        self.buffer[self.index].re = sample;
-        self.buffer[self.index].im = 0.0;
+        self.input_buffer[self.index] = sample;
         self.index += 1;
 
         if self.index == FFT_SIZE {
@@ -214,7 +221,9 @@ where
 
     fn try_seek(&mut self, pos: Duration) -> Result<(), rodio::source::SeekError> {
         self.index = 0;
-        self.buffer.fill(Complex { re: 0.0, im: 0.0 });
+        self.input_buffer.fill(0.0);
+        self.output_buffer
+            .fill(Complex { re: 0.0, im: 0.0 });
         self.inner.try_seek(pos)
     }
 }

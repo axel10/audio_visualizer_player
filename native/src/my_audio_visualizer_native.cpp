@@ -35,7 +35,7 @@ extern "C" {
 
 using Microsoft::WRL::ComPtr;
 
-static std::once_flag g_mf_startup_once;
+static std::mutex g_mf_startup_mutex;
 static std::atomic<bool> g_mf_started(false);
 
 static bool EnsureComInitializedForCurrentThread() {
@@ -52,14 +52,16 @@ static bool EnsureComInitializedForCurrentThread() {
 }
 
 static bool EnsureMediaFoundationStarted() {
-    std::call_once(g_mf_startup_once, []() {
-        if (!EnsureComInitializedForCurrentThread()) {
-            g_mf_started.store(false);
-            return;
-        }
-        HRESULT hr = MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET);
-        g_mf_started.store(SUCCEEDED(hr));
-    });
+    if (g_mf_started.load()) return true;
+    std::lock_guard<std::mutex> lock(g_mf_startup_mutex);
+    if (g_mf_started.load()) return true; // double-check
+    if (!EnsureComInitializedForCurrentThread()) {
+        return false;
+    }
+    HRESULT hr = MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET);
+    if (SUCCEEDED(hr)) {
+        g_mf_started.store(true);
+    }
     return g_mf_started.load();
 }
 
@@ -130,6 +132,7 @@ public:
     void Shutdown() {
         mPlaying = false;
         if (mDeviceInited) {
+            ma_device_stop(&mDevice);   // Explicitly stop before uninit for safety
             ma_device_uninit(&mDevice);
             mDeviceInited = false;
         }
@@ -143,6 +146,9 @@ public:
         mStreamEnded = false;
     }
 
+    static constexpr size_t kMaxDecodeCacheBytes = 16 * 1024 * 1024; // 16 MB cap
+    static constexpr int kMaxFormatChangeRetries = 8;
+
     bool ReadMoreDecodedDataIntoCache() {
         if (!mReaderInited || !mReader) {
             return false;
@@ -150,7 +156,12 @@ public:
         if (!EnsureComInitializedForCurrentThread() || !EnsureMediaFoundationStarted()) {
             return false;
         }
+        // Prevent unbounded cache growth
+        if (mDecodedCache.size() * sizeof(float) >= kMaxDecodeCacheBytes) {
+            return false;
+        }
 
+        int formatChangeRetries = 0;
         while (true) {
             DWORD flags = 0;
             ComPtr<IMFSample> sample;
@@ -172,6 +183,9 @@ public:
 
             if (!sample) {
                 if ((flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED) != 0) {
+                    if (++formatChangeRetries >= kMaxFormatChangeRetries) {
+                        return false; // Prevent infinite loop on repeated format changes
+                    }
                     continue;
                 }
                 return false;
@@ -248,6 +262,12 @@ public:
         return totalWritten;
     }
 
+    // Sanitize a float to 0 if NaN or Inf, preventing bad values from propagating.
+    static inline float SanitizeSample(float v) {
+        // Both NaN and Inf fail finite check
+        return (v == v && v <= 1e15f && v >= -1e15f) ? v : 0.0f;
+    }
+
     // miniaudio data callback - runs on the audio thread
     static void DataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount) {
         AudioEngine* engine = (AudioEngine*)pDevice->pUserData;
@@ -257,6 +277,10 @@ public:
             return;
         }
         ma_uint32 ch = engine->mChannels;
+        if (ch == 0) {
+            memset(pOutput, 0, frameCount * sizeof(float));
+            return;
+        }
 
         if (!engine->mPlaying.load()) {
             memset(pOutput, 0, frameCount * ch * sizeof(float));
@@ -272,11 +296,11 @@ public:
 
         ma_uint64 framesRead = engine->ReadDecodedPcmFrames(fOutput, frameCount);
 
-        // Apply volume
+        // Apply volume and sanitize samples (protect against NaN/Inf from corrupt files)
         float vol = engine->mVolume.load();
         ma_uint64 totalSamples = framesRead * ch;
         for (ma_uint64 i = 0; i < totalSamples; i++) {
-            fOutput[i] *= vol;
+            fOutput[i] = SanitizeSample(fOutput[i] * vol);
         }
 
         // Zero remaining frames if we didn't get enough (end of stream)
@@ -402,7 +426,9 @@ public:
 
         mPlaying = true;
         mStreamEnded = false;
-        ma_device_start(&mDevice);
+        if (ma_device_start(&mDevice) != MA_SUCCESS) {
+            mPlaying = false;
+        }
     }
 
     void Pause() {
@@ -414,7 +440,11 @@ public:
     void Seek(int32_t ms) {
         if (!mReaderInited || !mReader) return;
         if (ms < 0) ms = 0;
-        if (mDurationMs > 0 && (uint64_t)ms > mDurationMs) ms = (int32_t)mDurationMs;
+        // Safe clamp: mDurationMs may exceed INT32_MAX; cap to INT32_MAX for the int32_t parameter.
+        if (mDurationMs > 0) {
+            int64_t maxMs = static_cast<int64_t>((mDurationMs <= (uint64_t)INT32_MAX) ? mDurationMs : INT32_MAX);
+            if (ms > maxMs) ms = (int32_t)maxMs;
+        }
 
         {
             std::lock_guard<std::mutex> lock(mDecodeMutex);
@@ -422,12 +452,19 @@ public:
             PropVariantInit(&varPosition);
             varPosition.vt = VT_I8;
             varPosition.hVal.QuadPart = static_cast<LONGLONG>(ms) * 10000LL;
-            mReader->SetCurrentPosition(GUID_NULL, varPosition);
+            HRESULT hr = mReader->SetCurrentPosition(GUID_NULL, varPosition);
             PropVariantClear(&varPosition);
 
+            // Clear cache regardless — even on seek failure, stale data must go.
             mDecodedCache.clear();
             mDecodedCacheFrameOffset = 0;
             mReaderReachedEos = false;
+
+            if (FAILED(hr)) {
+                // Seek failed — reader may be in an undefined state.
+                // Mark EOS so playback stops cleanly instead of producing garbage.
+                mReaderReachedEos = true;
+            }
         }
 
         mCurrentPositionMs = ms;
@@ -449,6 +486,7 @@ public:
 
     // Push audio to our mono ring buffer for FFT
     void FeedRingBuffer(const float* data, size_t num_samples) {
+        if (!data || num_samples == 0 || mChannels == 0) return;
         std::lock_guard<std::mutex> lock(mRingMutex);
         size_t frames = num_samples / mChannels;
         for (size_t i = 0; i < frames; ++i) {
@@ -457,7 +495,7 @@ public:
                 mono += data[i * mChannels + c];
             }
             mono /= (float)mChannels;
-            mRingBuffer[mRingPos] = mono;
+            mRingBuffer[mRingPos] = SanitizeSample(mono);
             mRingPos = (mRingPos + 1) % mRingBuffer.size();
         }
     }
@@ -767,6 +805,11 @@ MAV_EXPORT int32_t mav_get_whole_track_waveform(const char* file_path, float* ou
 
     ma_uint32 num_channels = decoder.outputChannels;
     ma_uint32 sample_rate  = decoder.outputSampleRate;
+    // Guard against corrupt files reporting absurd channel counts
+    if (num_channels == 0 || num_channels > 64) {
+        ma_decoder_uninit(&decoder);
+        return -3;
+    }
 
     ma_uint64 totalFrames = 0;
     if (ma_decoder_get_length_in_pcm_frames(&decoder, &totalFrames) != MA_SUCCESS || totalFrames == 0) {

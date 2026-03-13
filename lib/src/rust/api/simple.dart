@@ -6,5 +6,25 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+// These functions are ignored because they are not marked as `pub`: `compute_fft`, `controller`, `ensure_audio_output`, `new`, `new`, `with_player`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `FftSource`, `PlayerController`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `channels`, `current_span_len`, `next`, `sample_rate`, `total_duration`
+
 String greet({required String name}) =>
     RustLib.instance.api.crateApiSimpleGreet(name: name);
+
+Future<void> loadAudioFile({required String path}) =>
+    RustLib.instance.api.crateApiSimpleLoadAudioFile(path: path);
+
+Future<void> playAudio() => RustLib.instance.api.crateApiSimplePlayAudio();
+
+Future<void> pauseAudio() => RustLib.instance.api.crateApiSimplePauseAudio();
+
+Future<bool> toggleAudio() => RustLib.instance.api.crateApiSimpleToggleAudio();
+
+bool isAudioPlaying() => RustLib.instance.api.crateApiSimpleIsAudioPlaying();
+
+Float32List getLatestFft() => RustLib.instance.api.crateApiSimpleGetLatestFft();
+
+String? getLoadedAudioPath() =>
+    RustLib.instance.api.crateApiSimpleGetLoadedAudioPath();

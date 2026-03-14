@@ -445,8 +445,13 @@ pub struct WaveformChunk {
 #[flutter_rust_bridge::frb(sync)]
 pub fn extract_waveform_streaming(
     expected_chunks: usize,
+    sample_stride: usize,
     sink: StreamSink<WaveformChunk>,
 ) -> Result<(), String> {
+    if expected_chunks == 0 {
+        return Err("expected_chunks must be > 0".to_string());
+    }
+
     let path = {
         if let Ok(c) = controller().lock() {
             c.loaded_path.clone()
@@ -455,6 +460,8 @@ pub fn extract_waveform_streaming(
         }
     }
     .ok_or_else(|| "No loaded audio file to extract waveform from".to_string())?;
+
+    let stride = sample_stride.max(1);
 
     std::thread::spawn(move || {
         let decode_core = || -> Result<(), String> {
@@ -480,12 +487,19 @@ pub fn extract_waveform_streaming(
             let mut current_chunk_max = 0.0f32;
             let mut samples_in_chunk = 0usize;
             let mut chunk_index = 0usize;
+            let mut stride_counter = 0usize;
 
             for sample in source {
-                // sample is f32 in rodio > 0.18
-                let abs_sample = sample.abs();
-                if abs_sample > current_chunk_max {
-                    current_chunk_max = abs_sample;
+                if stride_counter == 0 {
+                    // sample is f32 in rodio > 0.18
+                    let abs_sample = sample.abs();
+                    if abs_sample > current_chunk_max {
+                        current_chunk_max = abs_sample;
+                    }
+                }
+                stride_counter += 1;
+                if stride_counter >= stride {
+                    stride_counter = 0;
                 }
                 samples_in_chunk += 1;
 
@@ -521,7 +535,14 @@ pub fn extract_waveform_streaming(
 }
 
 
-pub fn extract_loaded_waveform(expected_chunks: usize) -> Result<Vec<f32>, String> {
+pub fn extract_loaded_waveform(
+    expected_chunks: usize,
+    sample_stride: usize,
+) -> Result<Vec<f32>, String> {
+    if expected_chunks == 0 {
+        return Err("expected_chunks must be > 0".to_string());
+    }
+
     let path = {
         if let Ok(c) = controller().lock() {
             c.loaded_path.clone()
@@ -547,15 +568,23 @@ pub fn extract_loaded_waveform(expected_chunks: usize) -> Result<Vec<f32>, Strin
     };
 
     let samples_per_chunk = (total_samples / expected_chunks).max(1);
+    let stride = sample_stride.max(1);
 
     let mut result = Vec::with_capacity(expected_chunks);
     let mut current_chunk_max = 0.0f32;
     let mut samples_in_chunk = 0usize;
+    let mut stride_counter = 0usize;
 
     for sample in source {
-        let abs_sample = sample.abs();
-        if abs_sample > current_chunk_max {
-            current_chunk_max = abs_sample;
+        if stride_counter == 0 {
+            let abs_sample = sample.abs();
+            if abs_sample > current_chunk_max {
+                current_chunk_max = abs_sample;
+            }
+        }
+        stride_counter += 1;
+        if stride_counter >= stride {
+            stride_counter = 0;
         }
         samples_in_chunk += 1;
 

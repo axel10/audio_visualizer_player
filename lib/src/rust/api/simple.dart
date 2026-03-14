@@ -46,13 +46,19 @@ String? getLoadedAudioPath() =>
 
 Stream<WaveformChunk> extractWaveformStreaming({
   required BigInt expectedChunks,
+  required BigInt sampleStride,
 }) => RustLib.instance.api.crateApiSimpleExtractWaveformStreaming(
   expectedChunks: expectedChunks,
+  sampleStride: sampleStride,
 );
 
-Future<Float32List> extractLoadedWaveform({required BigInt expectedChunks}) =>
+Future<Float32List> extractLoadedWaveform({
+  required BigInt expectedChunks,
+  required BigInt sampleStride,
+}) =>
     RustLib.instance.api.crateApiSimpleExtractLoadedWaveform(
       expectedChunks: expectedChunks,
+      sampleStride: sampleStride,
     );
 
 class WaveformChunk {

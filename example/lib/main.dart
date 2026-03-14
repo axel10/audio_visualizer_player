@@ -39,7 +39,6 @@ class _VisualizerDemoPageState extends State<VisualizerDemoPage> {
   StreamSubscription<FftFrame>? _sub;
   List<double> _bands = const [];
 
-  StreamSubscription<WaveformChunk>? _waveformSub;
   List<double> _waveform = [];
   final int _waveformChunks = 200;
 
@@ -105,25 +104,19 @@ class _VisualizerDemoPageState extends State<VisualizerDemoPage> {
     }
   }
 
-  void _loadWaveform() {
-    _waveformSub?.cancel();
-    _waveform = List.filled(_waveformChunks, 0.0);
-    _waveformSub = _controller.extractWaveform(expectedChunks: _waveformChunks).listen((chunk) {
-      if (!mounted) return;
-      setState(() {
-        final index = chunk.index.toInt();
-        if (index >= 0 && index < _waveform.length) {
-          _waveform[index] = chunk.peak;
-        }
-      });
-    }, onError: (e) {
-      debugPrint('Waveform extraction error: $e');
+  Future<void> _loadWaveform() async {
+    final waveform = await _controller.getLoadedWaveform(
+      expectedChunks: _waveformChunks,
+      sampleStride: 200,
+    );
+    if (!mounted) return;
+    setState(() {
+      _waveform = waveform;
     });
   }
 
   @override
   void dispose() {
-    _waveformSub?.cancel();
     _sub?.cancel();
     _controller.dispose();
     super.dispose();
@@ -186,7 +179,7 @@ class _VisualizerDemoPageState extends State<VisualizerDemoPage> {
                 ),
                 if (_controller.selectedPath != null)
                   ElevatedButton(
-                    onPressed: _loadWaveform,
+                    onPressed: () => _loadWaveform(),
                     child: const Text('Extract Full Waveform (Fast)'),
                   ),
                 if (_controller.playlist.isNotEmpty)

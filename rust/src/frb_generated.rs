@@ -100,11 +100,12 @@ fn wire__crate__api__simple__extract_loaded_waveform_impl(
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_expected_chunks = <usize>::sse_decode(&mut deserializer);
+            let api_sample_stride = <usize>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, String>((move || {
                     let output_ok =
-                        crate::api::simple::extract_loaded_waveform(api_expected_chunks)?;
+                        crate::api::simple::extract_loaded_waveform(api_expected_chunks, api_sample_stride)?;
                     Ok(output_ok)
                 })())
             }
@@ -133,6 +134,7 @@ fn wire__crate__api__simple__extract_waveform_streaming_impl(
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_expected_chunks = <usize>::sse_decode(&mut deserializer);
+            let api_sample_stride = <usize>::sse_decode(&mut deserializer);
             let api_sink = <StreamSink<
                 crate::api::simple::WaveformChunk,
                 flutter_rust_bridge::for_generated::SseCodec,
@@ -140,7 +142,11 @@ fn wire__crate__api__simple__extract_waveform_streaming_impl(
             deserializer.end();
             transform_result_sse::<_, String>((move || {
                 let output_ok =
-                    crate::api::simple::extract_waveform_streaming(api_expected_chunks, api_sink)?;
+                    crate::api::simple::extract_waveform_streaming(
+                        api_expected_chunks,
+                        api_sample_stride,
+                        api_sink,
+                    )?;
                 Ok(output_ok)
             })())
         },

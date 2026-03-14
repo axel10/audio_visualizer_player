@@ -81,10 +81,12 @@ abstract class RustLibApi extends BaseApi {
 
   Future<Float32List> crateApiSimpleExtractLoadedWaveform({
     required BigInt expectedChunks,
+    required BigInt sampleStride,
   });
 
   Stream<WaveformChunk> crateApiSimpleExtractWaveformStreaming({
     required BigInt expectedChunks,
+    required BigInt sampleStride,
   });
 
   PlatformInt64 crateApiSimpleGetAudioDurationMs();
@@ -152,12 +154,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @override
   Future<Float32List> crateApiSimpleExtractLoadedWaveform({
     required BigInt expectedChunks,
+    required BigInt sampleStride,
   }) {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_usize(expectedChunks, serializer);
+          sse_encode_usize(sampleStride, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -170,7 +174,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_String,
         ),
         constMeta: kCrateApiSimpleExtractLoadedWaveformConstMeta,
-        argValues: [expectedChunks],
+        argValues: [expectedChunks, sampleStride],
         apiImpl: this,
       ),
     );
@@ -179,12 +183,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiSimpleExtractLoadedWaveformConstMeta =>
       const TaskConstMeta(
         debugName: "extract_loaded_waveform",
-        argNames: ["expectedChunks"],
+        argNames: ["expectedChunks", "sampleStride"],
       );
 
   @override
   Stream<WaveformChunk> crateApiSimpleExtractWaveformStreaming({
     required BigInt expectedChunks,
+    required BigInt sampleStride,
   }) {
     final sink = RustStreamSink<WaveformChunk>();
     handler.executeSync(
@@ -192,6 +197,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_usize(expectedChunks, serializer);
+          sse_encode_usize(sampleStride, serializer);
           sse_encode_StreamSink_waveform_chunk_Sse(sink, serializer);
           return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
         },
@@ -200,7 +206,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_String,
         ),
         constMeta: kCrateApiSimpleExtractWaveformStreamingConstMeta,
-        argValues: [expectedChunks, sink],
+        argValues: [expectedChunks, sampleStride, sink],
         apiImpl: this,
       ),
     );
@@ -210,7 +216,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiSimpleExtractWaveformStreamingConstMeta =>
       const TaskConstMeta(
         debugName: "extract_waveform_streaming",
-        argNames: ["expectedChunks", "sink"],
+        argNames: ["expectedChunks", "sampleStride", "sink"],
       );
 
   @override

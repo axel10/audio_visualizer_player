@@ -106,7 +106,7 @@ class _VisualizerDemoPageState extends State<VisualizerDemoPage> {
   }
 
   Future<void> _loadWaveform() async {
-    final waveform = await _controller.getLoadedWaveform(
+    final waveform = await _controller.getWaveform(
       expectedChunks: _waveformChunks,
       sampleStride: _waveformStride,
     );

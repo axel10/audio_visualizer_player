@@ -410,7 +410,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   /// [sampleStride] controls packet-step sampling (1 = process every packet).
   /// When [filePath] is provided, extraction runs directly on that file path
   /// without requiring it to be loaded or playing.
-  Future<List<double>> getLoadedWaveform({
+  Future<List<double>> getWaveform({
     required int expectedChunks,
     int sampleStride = 1,
     String? filePath,
@@ -461,7 +461,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
       notifyListeners();
       return const [];
     }
-    return getLoadedWaveform(
+    return getWaveform(
       expectedChunks: outCount,
       sampleStride: sampleStride,
       filePath: filePath,

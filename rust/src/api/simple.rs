@@ -575,13 +575,22 @@ fn extract_waveform_from_path(
             continue;
         }
 
+        let packet_dur = packet.dur();
+        let packet_ts = packet.ts();
+
         let process_this_packet = packet_index % sample_stride == 0;
         packet_index = packet_index.saturating_add(1);
+
         if !process_this_packet {
+            // Updated: Just update the timestamp and skip decoding/processing
+            let packet_end_ts = packet_ts.saturating_add(packet_dur.max(1));
+            if packet_end_ts > max_packet_end_ts {
+                max_packet_end_ts = packet_end_ts;
+            }
             continue;
         }
 
-        let packet_end_ts = packet.ts().saturating_add(packet.dur().max(1));
+        let packet_end_ts = packet_ts.saturating_add(packet_dur.max(1));
         if packet_end_ts > max_packet_end_ts {
             max_packet_end_ts = packet_end_ts;
         }

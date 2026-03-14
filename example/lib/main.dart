@@ -41,6 +41,7 @@ class _VisualizerDemoPageState extends State<VisualizerDemoPage> {
 
   List<double> _waveform = [];
   final int _waveformChunks = 200;
+  int _waveformStride = 1;
 
   @override
   void initState() {
@@ -107,9 +108,10 @@ class _VisualizerDemoPageState extends State<VisualizerDemoPage> {
   Future<void> _loadWaveform() async {
     final waveform = await _controller.getLoadedWaveform(
       expectedChunks: _waveformChunks,
-      sampleStride: 200,
+      sampleStride: _waveformStride,
     );
     if (!mounted) return;
+    debugPrint(waveform.toString());
     setState(() {
       _waveform = waveform;
     });
@@ -181,6 +183,34 @@ class _VisualizerDemoPageState extends State<VisualizerDemoPage> {
                   ElevatedButton(
                     onPressed: () => _loadWaveform(),
                     child: const Text('Extract Full Waveform (Fast)'),
+                  ),
+                if (_controller.selectedPath != null)
+                  Row(
+                    children: [
+                      const Text('Waveform Stride'),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Slider(
+                          min: 1,
+                          max: 32,
+                          divisions: 31,
+                          value: _waveformStride.toDouble(),
+                          label: '$_waveformStride',
+                          onChanged: (value) {
+                            setState(() {
+                              _waveformStride = value.round().clamp(1, 32);
+                            });
+                          },
+                        ),
+                      ),
+                      SizedBox(
+                        width: 36,
+                        child: Text(
+                          '$_waveformStride',
+                          textAlign: TextAlign.right,
+                        ),
+                      ),
+                    ],
                   ),
                 if (_controller.playlist.isNotEmpty)
                   Align(

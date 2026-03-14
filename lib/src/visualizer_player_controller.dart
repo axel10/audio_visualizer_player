@@ -401,8 +401,9 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   /// Returns the whole-track waveform for the currently loaded audio.
   ///
   /// [expectedChunks] controls the number of normalized amplitude samples (0.0 to 1.0).
-  /// [sampleStride] samples every Nth frame to trade accuracy for speed (1 = full scan).
-  /// This is executed in Rust and returns quickly even for large files.
+  /// This performs a full scan of the audio file to find the maximum peak in each chunk,
+  /// ensuring high accuracy for waveform visualization.
+  /// [sampleStride] controls stepped peak search (1 = full scan).
   Future<List<double>> getLoadedWaveform({
     required int expectedChunks,
     int sampleStride = 1,
@@ -418,8 +419,8 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
       return const [];
     }
 
-    final clampedStride = sampleStride < 1 ? 1 : sampleStride;
     try {
+      final clampedStride = sampleStride < 1 ? 1 : sampleStride;
       final data = await extractLoadedWaveform(
         expectedChunks: BigInt.from(expectedChunks),
         sampleStride: BigInt.from(clampedStride),
@@ -432,14 +433,29 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     }
   }
 
+  /// Same as [getLoadedWaveform] but returns a stream of [WaveformChunk]s.
+  Stream<WaveformChunk> getLoadedWaveformStream({
+    required int expectedChunks,
+    int sampleStride = 1,
+  }) {
+    if (_selectedPath == null) {
+      return Stream.error('No audio loaded');
+    }
+    final clampedStride = sampleStride < 1 ? 1 : sampleStride;
+    return extractWaveformStreaming(
+      expectedChunks: BigInt.from(expectedChunks),
+      sampleStride: BigInt.from(clampedStride),
+    );
+  }
+
   /// Calculates the whole-track waveform for the given [filePath].
   ///
   /// The [outCount] parameter specifies how many normalized magnitude samples (0.0 to 1.0)
-  /// you want returned. Uses [useFastMode] (default true) to read sparsely for faster rendering.
+  /// you want returned.
   Future<List<double>> getWholeTrackWaveform({
     required String filePath,
     required int outCount,
-    bool useFastMode = true,
+    int sampleStride = 1,
   }) async {
     if (filePath.isEmpty) {
       _error = 'Selected file path is unavailable.';
@@ -449,8 +465,10 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     if (_selectedPath != filePath) {
       await loadFromPath(filePath);
     }
-    final stride = useFastMode ? 4 : 1;
-    return getLoadedWaveform(expectedChunks: outCount, sampleStride: stride);
+    return getLoadedWaveform(
+      expectedChunks: outCount,
+      sampleStride: sampleStride,
+    );
   }
 
   Future<void> _onAnalysisTick() async {
@@ -1386,4 +1404,19 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     _playlistStateNotifier.dispose();
   }
 
+  /// Extracts the waveform of currently loaded audio extremely fast via a background Rust thread,
+  /// streaming the resulting chunks incrementally.
+  /// Each chunk provides the maximum absolute amplitude (peak) of its segment.
+  /// [expectedChunks] dictates the temporal resolution of the total extracted waveform.
+  /// [sampleStride] samples every Nth frame to trade accuracy for speed (1 = full scan).
+  Stream<WaveformChunk> extractWaveform({
+    required int expectedChunks,
+    int sampleStride = 1,
+  }) {
+    final clampedStride = sampleStride < 1 ? 1 : sampleStride;
+    return extractWaveformStreaming(
+      expectedChunks: BigInt.from(expectedChunks),
+      sampleStride: BigInt.from(clampedStride),
+    );
+  }
 }

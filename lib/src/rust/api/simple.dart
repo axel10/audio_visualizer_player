@@ -6,9 +6,9 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `append_from_path`, `clear_fft`, `compute_fft`, `controller`, `ensure_audio_output`, `new`, `new`, `playback_position`, `push_mono_sample`, `with_player`
+// These functions are ignored because they are not marked as `pub`: `append_from_path`, `clear_fft`, `compute_fft`, `controller`, `ensure_audio_output`, `new`, `new`, `playback_position`, `push_mono_sample`, `read_frame_abs_max`, `with_player`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `FftSource`, `PlayerController`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `channels`, `current_span_len`, `next`, `sample_rate`, `total_duration`, `try_seek`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `channels`, `clone`, `current_span_len`, `fmt`, `next`, `sample_rate`, `total_duration`, `try_seek`
 
 String greet({required String name}) =>
     RustLib.instance.api.crateApiSimpleGreet(name: name);
@@ -44,6 +44,14 @@ Float32List getLatestFft() => RustLib.instance.api.crateApiSimpleGetLatestFft();
 String? getLoadedAudioPath() =>
     RustLib.instance.api.crateApiSimpleGetLoadedAudioPath();
 
+Stream<WaveformChunk> extractWaveformStreaming({
+  required BigInt expectedChunks,
+  required BigInt sampleStride,
+}) => RustLib.instance.api.crateApiSimpleExtractWaveformStreaming(
+  expectedChunks: expectedChunks,
+  sampleStride: sampleStride,
+);
+
 Future<Float32List> extractLoadedWaveform({
   required BigInt expectedChunks,
   required BigInt sampleStride,
@@ -51,3 +59,21 @@ Future<Float32List> extractLoadedWaveform({
   expectedChunks: expectedChunks,
   sampleStride: sampleStride,
 );
+
+class WaveformChunk {
+  final BigInt index;
+  final double peak;
+
+  const WaveformChunk({required this.index, required this.peak});
+
+  @override
+  int get hashCode => index.hashCode ^ peak.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is WaveformChunk &&
+          runtimeType == other.runtimeType &&
+          index == other.index &&
+          peak == other.peak;
+}

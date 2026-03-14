@@ -21,6 +21,9 @@ struct PlayerController {
     loaded_duration: Duration,
     source_start_offset: Duration,
     volume: f32,
+    cached_pcm: Option<Arc<Vec<f32>>>,
+    cached_channels: usize,
+    cached_sample_rate: u32,
 }
 
 impl PlayerController {
@@ -33,6 +36,9 @@ impl PlayerController {
             loaded_duration: Duration::ZERO,
             source_start_offset: Duration::ZERO,
             volume: 1.0,
+            cached_pcm: None,
+            cached_channels: 0,
+            cached_sample_rate: 0,
         }
     }
 
@@ -106,6 +112,25 @@ impl PlayerController {
         self.loaded_duration = total;
         self.source_start_offset = clamped_offset;
         self.clear_fft();
+
+        // Start pre-caching PCM data in a background thread
+        let path_clone = path.to_string();
+        std::thread::spawn(move || {
+            if let Ok(file) = File::open(&path_clone) {
+                if let Ok(source) = Decoder::try_from(file) {
+                    let channels = source.channels().get() as usize;
+                    let sample_rate = source.sample_rate().get();
+                    let pcm: Vec<f32> = source.collect();
+                    if let Ok(mut c) = controller().lock() {
+                        if c.loaded_path.as_deref() == Some(&path_clone) {
+                            c.cached_pcm = Some(Arc::new(pcm));
+                            c.cached_channels = channels;
+                            c.cached_sample_rate = sample_rate;
+                        }
+                    }
+                }
+            }
+        });
 
         Ok(())
     }
@@ -386,6 +411,9 @@ pub fn dispose_audio() -> Result<(), String> {
     c.loaded_path = None;
     c.loaded_duration = Duration::ZERO;
     c.source_start_offset = Duration::ZERO;
+    c.cached_pcm = None;
+    c.cached_channels = 0;
+    c.cached_sample_rate = 0;
     c.clear_fft();
     Ok(())
 }
@@ -434,10 +462,44 @@ pub fn get_loaded_audio_path() -> Option<String> {
     None
 }
 
-pub fn extract_loaded_waveform(
+use crate::frb_generated::StreamSink;
+
+#[derive(Debug, Clone)]
+pub struct WaveformChunk {
+    pub index: usize,
+    pub peak: f32, // absolute max peak
+}
+
+fn read_frame_abs_max<I>(source: &mut I, channels: usize) -> Option<f32>
+where
+    I: Iterator<Item = f32>,
+{
+    let mut found_any = false;
+    let mut frame_max = 0.0f32;
+
+    for _ in 0..channels {
+        if let Some(sample) = source.next() {
+            let abs_sample = sample.abs();
+            if abs_sample > frame_max {
+                frame_max = abs_sample;
+            }
+            found_any = true;
+        }
+    }
+
+    if found_any {
+        Some(frame_max)
+    } else {
+        None
+    }
+}
+
+#[flutter_rust_bridge::frb(sync)]
+pub fn extract_waveform_streaming(
     expected_chunks: usize,
     sample_stride: usize,
-) -> Result<Vec<f32>, String> {
+    sink: StreamSink<WaveformChunk>,
+) -> Result<(), String> {
     if expected_chunks == 0 {
         return Err("expected_chunks must be > 0".to_string());
     }
@@ -448,53 +510,216 @@ pub fn extract_loaded_waveform(
         } else {
             None
         }
-    }.ok_or_else(|| "No loaded audio file to extract waveform from".to_string())?;
+    }
+    .ok_or_else(|| "No loaded audio file to extract waveform from".to_string())?;
 
-    let file = File::open(&path).map_err(|e| format!("open file failed: {} - {}", path, e))?;
-    let source = Decoder::try_from(file).map_err(|e| format!("decode failed: {}", e))?;
+    let sample_stride = sample_stride.max(1);
 
-    let total_samples = match source.total_duration() {
-        Some(dur) => {
-            let sample_rate: u32 = source.sample_rate().into();
-            let channels: u16 = source.channels().into();
-            (dur.as_millis() as u64 * sample_rate as u64 / 1000 * channels as u64) as usize
-        }
-        None => {
-            let sample_rate: u32 = source.sample_rate().into();
-            let channels: u16 = source.channels().into();
-            3 * 60 * sample_rate as usize * channels as usize
-        }
-    };
+    std::thread::spawn(move || {
+        let decode_core = || -> Result<(), String> {
+            let file = File::open(&path).map_err(|e| format!("open file failed: {} - {}", path, e))?;
+            let mut source = Decoder::try_from(file).map_err(|e| format!("decode failed: {}", e))?;
 
-    let samples_per_chunk = (total_samples / expected_chunks).max(1);
-    let stride = sample_stride.max(1);
+            let total_duration = source
+                .total_duration()
+                .ok_or_else(|| "Unknown duration".to_string())?;
+            let channels = source.channels().get() as usize;
+            let sample_rate = source.sample_rate().get() as f64;
 
-    let mut result = Vec::with_capacity(expected_chunks);
-    let mut current_chunk_max = 0.0f32;
-    let mut samples_in_chunk = 0usize;
-    let mut stride_counter = 0usize;
-
-    for sample in source {
-        if stride_counter == 0 {
-            let abs_sample = sample.abs();
-            if abs_sample > current_chunk_max {
-                current_chunk_max = abs_sample;
+            let total_samples = (total_duration.as_secs_f64() * sample_rate) as usize;
+            if total_samples == 0 {
+                for i in 0..expected_chunks {
+                    let _ = sink.add(WaveformChunk {
+                        index: i,
+                        peak: 0.0,
+                    });
+                }
+                return Ok(());
             }
-        }
-        stride_counter += 1;
-        if stride_counter >= stride {
-            stride_counter = 0;
-        }
-        samples_in_chunk += 1;
 
-        if samples_in_chunk >= samples_per_chunk {
-            result.push(current_chunk_max.min(1.0));
-            samples_in_chunk = 0;
-            current_chunk_max = 0.0;
+            let samples_per_chunk = total_samples / expected_chunks;
+            let skip_duration_per_stride = if sample_stride > 1 {
+                Some(Duration::from_secs_f64(
+                    (sample_stride - 1) as f64 / sample_rate,
+                ))
+            } else {
+                None
+            };
+
+            for chunk_index in 0..expected_chunks {
+                let mut current_chunk_max = 0.0f32;
+                let mut samples_read = 0;
+
+                while samples_read < samples_per_chunk {
+                    let Some(frame_peak) = read_frame_abs_max(&mut source, channels) else {
+                        break;
+                    };
+                    if frame_peak > current_chunk_max {
+                        current_chunk_max = frame_peak;
+                    }
+                    samples_read += 1;
+
+                    if let Some(skip_dur) = skip_duration_per_stride {
+                        if samples_read < samples_per_chunk {
+                            let available_in_chunk = samples_per_chunk - samples_read;
+                            let to_skip_in_stride = sample_stride - 1;
+
+                            if available_in_chunk < to_skip_in_stride {
+                                let remaining_skip = Duration::from_secs_f64(
+                                    available_in_chunk as f64 / sample_rate,
+                                );
+                                source = source.skip_duration(remaining_skip).into_inner();
+                                samples_read += available_in_chunk;
+                            } else {
+                                source = source.skip_duration(skip_dur).into_inner();
+                                samples_read += to_skip_in_stride;
+                            }
+                        }
+                    }
+                }
+
+                let _ = sink.add(WaveformChunk {
+                    index: chunk_index,
+                    peak: current_chunk_max.min(1.0),
+                });
+            }
+
+            Ok(())
+        };
+
+        if let Err(e) = decode_core() {
+            println!("extract_waveform_streaming error: {:?}", e);
         }
+    });
+
+    Ok(())
+}
+
+
+pub fn extract_loaded_waveform(
+    expected_chunks: usize,
+    sample_stride: usize,
+) -> Result<Vec<f32>, String> {
+    if expected_chunks == 0 {
+        return Err("expected_chunks must be > 0".to_string());
     }
 
-    if samples_in_chunk > 0 {
+    let sample_stride = sample_stride.max(1);
+
+    // Try to use cached PCM data if available
+    let (pcm, channels, _sample_rate, path) = {
+        let c = controller()
+            .lock()
+            .map_err(|_| "player lock poisoned".to_string())?;
+        (
+            c.cached_pcm.clone(),
+            c.cached_channels,
+            c.cached_sample_rate,
+            c.loaded_path.clone(),
+        )
+    };
+
+    if let Some(pcm) = pcm {
+        let total_frames = pcm.len() / channels;
+        if total_frames == 0 {
+            return Ok(vec![0.0; expected_chunks]);
+        }
+
+        let frames_per_chunk = total_frames / expected_chunks;
+        let mut result = Vec::with_capacity(expected_chunks);
+
+        for chunk_index in 0..expected_chunks {
+            let start_frame = chunk_index * frames_per_chunk;
+            let end_frame = if chunk_index == expected_chunks - 1 {
+                total_frames
+            } else {
+                (chunk_index + 1) * frames_per_chunk
+            };
+
+            let mut current_chunk_max = 0.0f32;
+            let mut frame_idx = start_frame;
+            while frame_idx < end_frame {
+                let sample_idx = frame_idx * channels;
+                if sample_idx < pcm.len() {
+                    for ch in 0..channels {
+                        let s_idx = sample_idx + ch;
+                        if s_idx < pcm.len() {
+                            let abs_sample = pcm[s_idx].abs();
+                            if abs_sample > current_chunk_max {
+                                current_chunk_max = abs_sample;
+                            }
+                        }
+                    }
+                }
+                frame_idx += sample_stride;
+            }
+            result.push(current_chunk_max.min(1.0));
+        }
+        return Ok(result);
+    }
+
+    // Fallback if not cached
+    let path = path.ok_or_else(|| "No loaded audio file to extract waveform from".to_string())?;
+    let file = File::open(&path).map_err(|e| format!("open file failed: {} - {}", path, e))?;
+    let mut source = Decoder::try_from(file).map_err(|e| format!("decode failed: {}", e))?;
+
+    let total_duration = source
+        .total_duration()
+        .ok_or_else(|| "Unknown duration".to_string())?;
+    let channels = source.channels().get() as usize;
+    let sample_rate = source.sample_rate().get() as f64;
+
+    // Calculate total number of samples (per channel)
+    let total_samples = (total_duration.as_secs_f64() * sample_rate) as usize;
+    if total_samples == 0 {
+        return Ok(vec![0.0; expected_chunks]);
+    }
+
+    // Each chunk will cover this many samples (per channel)
+    let samples_per_chunk = total_samples / expected_chunks;
+    let skip_duration_per_stride = if sample_stride > 1 {
+        Some(Duration::from_secs_f64(
+            (sample_stride - 1) as f64 / (sample_rate as f64),
+        ))
+    } else {
+        None
+    };
+
+    let mut result = Vec::with_capacity(expected_chunks);
+
+    // Iterate linearly and evaluate one frame every `sample_stride` frames.
+    for _ in 0..expected_chunks {
+        let mut current_chunk_max = 0.0f32;
+        let mut samples_read = 0;
+
+        // Read frames belonging to this chunk.
+        while samples_read < samples_per_chunk {
+            let Some(frame_peak) = read_frame_abs_max(&mut source, channels) else {
+                break;
+            };
+            if frame_peak > current_chunk_max {
+                current_chunk_max = frame_peak;
+            }
+            samples_read += 1;
+
+            if let Some(skip_dur) = skip_duration_per_stride {
+                if samples_read < samples_per_chunk {
+                    let available_in_chunk = samples_per_chunk - samples_read;
+                    let to_skip_in_stride = sample_stride - 1;
+
+                    if available_in_chunk < to_skip_in_stride {
+                        let remaining_skip =
+                            Duration::from_secs_f64(available_in_chunk as f64 / (sample_rate as f64));
+                        source = source.skip_duration(remaining_skip).into_inner();
+                        samples_read += available_in_chunk;
+                    } else {
+                        source = source.skip_duration(skip_dur).into_inner();
+                        samples_read += to_skip_in_stride;
+                    }
+                }
+            }
+        }
+
         result.push(current_chunk_max.min(1.0));
     }
 

@@ -40,8 +40,8 @@ class _VisualizerDemoPageState extends State<VisualizerDemoPage> {
   List<double> _bands = const [];
 
   List<double> _waveform = [];
-  final int _waveformChunks = 200;
-  int _waveformStride = 1;
+  final int _waveformChunks = 500;
+  int _waveformStride = 2;
 
   @override
   void initState() {

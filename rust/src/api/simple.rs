@@ -1,8 +1,16 @@
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Source};
 use realfft::{num_complex::Complex, RealFftPlanner, RealToComplex};
 use std::fs::File;
+use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
+use symphonia::core::audio::SampleBuffer;
+use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+use symphonia::core::errors::Error as SymphoniaError;
+use symphonia::core::formats::FormatOptions;
+use symphonia::core::io::MediaSourceStream;
+use symphonia::core::meta::MetadataOptions;
+use symphonia::core::probe::Hint;
 
 const FFT_SIZE: usize = 1024;
 const RAW_FFT_BINS: usize = FFT_SIZE / 2;
@@ -473,71 +481,38 @@ pub struct WaveformChunk {
     pub peak: f32, // absolute max peak
 }
 
-fn read_frame_abs_max<I>(source: &mut I, channels: usize) -> Option<f32>
-where
-    I: Iterator<Item = f32>,
-{
-    let mut found_any = false;
-    let mut frame_max = 0.0f32;
-
-    for _ in 0..channels {
-        if let Some(sample) = source.next() {
-            let abs_sample = sample.abs();
-            if abs_sample > frame_max {
-                frame_max = abs_sample;
-            }
-            found_any = true;
-        }
-    }
-
-    if found_any {
-        Some(frame_max)
-    } else {
-        None
-    }
-}
-
-fn compute_waveform_from_pcm(
-    pcm: &[f32],
-    channels: usize,
+fn fold_packet_peaks_to_chunks(
+    packet_peaks: &[(u64, f32)],
     expected_chunks: usize,
-    sample_stride: usize,
+    total_ts: Option<u64>,
 ) -> Vec<f32> {
-    let channels = channels.max(1);
-    let sample_stride = sample_stride.max(1);
-    let total_frames = pcm.len() / channels;
-
-    if total_frames == 0 {
-        return vec![0.0; expected_chunks];
+    let mut waveform = vec![0.0f32; expected_chunks];
+    if packet_peaks.is_empty() {
+        return waveform;
     }
 
-    let mut result = Vec::with_capacity(expected_chunks);
-
-    for chunk_index in 0..expected_chunks {
-        let start_frame = chunk_index * total_frames / expected_chunks;
-        let end_frame = (chunk_index + 1) * total_frames / expected_chunks;
-
-        let mut current_chunk_max = 0.0f32;
-        let mut frame_idx = start_frame;
-
-        while frame_idx < end_frame {
-            let sample_idx = frame_idx * channels;
-            for ch in 0..channels {
-                let abs_sample = pcm[sample_idx + ch].abs();
-                if abs_sample > current_chunk_max {
-                    current_chunk_max = abs_sample;
-                }
+    if let Some(ts_end) = total_ts.filter(|v| *v > 0) {
+        for (packet_end_ts, peak) in packet_peaks {
+            let ts = packet_end_ts.saturating_sub(1);
+            let idx = ((ts as u128 * expected_chunks as u128) / ts_end as u128) as usize;
+            let chunk = idx.min(expected_chunks.saturating_sub(1));
+            if *peak > waveform[chunk] {
+                waveform[chunk] = *peak;
             }
-            frame_idx += sample_stride;
         }
-
-        result.push(current_chunk_max.min(1.0));
+        return waveform;
     }
 
-    result
+    let packet_count = packet_peaks.len().max(1);
+    for (i, (_, peak)) in packet_peaks.iter().enumerate() {
+        let idx = (i * expected_chunks) / packet_count;
+        let chunk = idx.min(expected_chunks.saturating_sub(1));
+        if *peak > waveform[chunk] {
+            waveform[chunk] = *peak;
+        }
+    }
+    waveform
 }
-
-
 
 pub fn extract_loaded_waveform(
     expected_chunks: usize,
@@ -560,11 +535,93 @@ pub fn extract_loaded_waveform(
             .ok_or_else(|| "No loaded audio file to extract waveform from".to_string())?
     };
 
-    // No cache yet: decode the full file into memory in one shot (non-streaming).
+    // Stream decode with Symphonia and aggregate per-packet peaks.
     let file = File::open(&path).map_err(|e| format!("open file failed: {} - {}", path, e))?;
-    let source = Decoder::try_from(file).map_err(|e| format!("decode failed: {}", e))?;
-    let channels = source.channels().get() as usize;
-    let pcm: Vec<f32> = source.collect();
+    let mut hint = Hint::new();
+    if let Some(ext) = Path::new(&path).extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+    }
+
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let mut format = symphonia::default::get_probe()
+        .format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
+        .map_err(|e| format!("probe format failed: {}", e))?
+        .format;
+
+    let track = format
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .or_else(|| format.default_track())
+        .ok_or_else(|| "No audio track found in loaded file".to_string())?;
+
+    let track_id = track.id;
+    let total_ts = track.codec_params.n_frames.filter(|v| *v > 0);
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &DecoderOptions::default())
+        .map_err(|e| format!("create decoder failed: {}", e))?;
+
+    let mut sample_buf: Option<SampleBuffer<f32>> = None;
+    let mut packet_peaks: Vec<(u64, f32)> = Vec::new();
+    let mut packet_index = 0usize;
+    let mut max_packet_end_ts = 0u64;
+
+    loop {
+        let packet = match format.next_packet() {
+            Ok(packet) => packet,
+            Err(SymphoniaError::IoError(_)) => break,
+            Err(SymphoniaError::ResetRequired) => {
+                return Err("stream reset required during waveform decode".to_string());
+            }
+            Err(err) => return Err(format!("read packet failed: {}", err)),
+        };
+
+        if packet.track_id() != track_id {
+            continue;
+        }
+
+        let process_this_packet = packet_index % sample_stride == 0;
+        packet_index = packet_index.saturating_add(1);
+        if !process_this_packet {
+            continue;
+        }
+
+        let packet_end_ts = packet.ts().saturating_add(packet.dur().max(1));
+        if packet_end_ts > max_packet_end_ts {
+            max_packet_end_ts = packet_end_ts;
+        }
+
+        let decoded = match decoder.decode(&packet) {
+            Ok(decoded) => decoded,
+            Err(SymphoniaError::DecodeError(_)) => continue,
+            Err(SymphoniaError::IoError(_)) => continue,
+            Err(err) => return Err(format!("decode packet failed: {}", err)),
+        };
+
+        if sample_buf.is_none() {
+            sample_buf = Some(SampleBuffer::<f32>::new(
+                decoded.capacity() as u64,
+                *decoded.spec(),
+            ));
+        }
+
+        if let Some(buf) = sample_buf.as_mut() {
+            buf.copy_interleaved_ref(decoded);
+            let mut peak = 0.0f32;
+            for sample in buf.samples() {
+                let abs_sample = sample.abs();
+                if abs_sample > peak {
+                    peak = abs_sample;
+                }
+            }
+            packet_peaks.push((packet_end_ts, peak.min(1.0)));
+        }
+    }
 
     {
         // Ensure the decoded result still matches the active loaded file.
@@ -576,10 +633,10 @@ pub fn extract_loaded_waveform(
         }
     }
 
-    Ok(compute_waveform_from_pcm(
-        &pcm,
-        channels,
+    let effective_total_ts = total_ts.or(Some(max_packet_end_ts.max(1)));
+    Ok(fold_packet_peaks_to_chunks(
+        &packet_peaks,
         expected_chunks,
-        sample_stride,
+        effective_total_ts,
     ))
 }

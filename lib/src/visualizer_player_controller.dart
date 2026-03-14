@@ -406,9 +406,8 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   /// Returns the whole-track waveform for the currently loaded audio.
   ///
   /// [expectedChunks] controls the number of normalized amplitude samples (0.0 to 1.0).
-  /// This performs a full scan of the audio file to find the maximum peak in each chunk,
-  /// ensuring high accuracy for waveform visualization.
-  /// [sampleStride] controls stepped peak search (1 = full scan).
+  /// This uses Rust/Symphonia streaming decode and aggregates chunk peaks.
+  /// [sampleStride] controls packet-step sampling (1 = process every packet).
   Future<List<double>> getLoadedWaveform({
     required int expectedChunks,
     int sampleStride = 1,

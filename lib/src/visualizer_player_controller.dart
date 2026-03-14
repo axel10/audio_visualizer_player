@@ -40,12 +40,13 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     this.fftSize = 1024,
     this.analysisFrequencyHz = 30.0,
     VisualizerOptimizationOptions visualOptions =
-        const VisualizerOptimizationOptions(),
-  }) : assert(fftSize > 0),
-       assert(analysisFrequencyHz > 0),
-       assert(visualOptions.frequencyGroups > 0),
-       assert(visualOptions.targetFrameRate > 0),
-       assert(visualOptions.groupContrastExponent > 0) {
+    const VisualizerOptimizationOptions(),
+  })
+      : assert(fftSize > 0),
+        assert(analysisFrequencyHz > 0),
+        assert(visualOptions.frequencyGroups > 0),
+        assert(visualOptions.targetFrameRate > 0),
+        assert(visualOptions.groupContrastExponent > 0) {
     _fftProcessor = FftProcessor(fftSize: fftSize, options: visualOptions);
   }
 
@@ -76,9 +77,9 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   late final FftProcessor _fftProcessor;
 
   final StreamController<FftFrame> _rawFftController =
-      StreamController<FftFrame>.broadcast();
+  StreamController<FftFrame>.broadcast();
   final StreamController<FftFrame> _optimizedFftController =
-      StreamController<FftFrame>.broadcast();
+  StreamController<FftFrame>.broadcast();
 
   /// Whether the current platform is Android.
   bool get isAndroid => Platform.isAndroid;
@@ -132,9 +133,11 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
 
   Duration get _analysisInterval =>
       Duration(microseconds: (1000000.0 / analysisFrequencyHz).round());
-  Duration get _renderInterval => Duration(
-    microseconds: (1000000.0 / visualOptions.targetFrameRate).round(),
-  );
+
+  Duration get _renderInterval =>
+      Duration(
+        microseconds: (1000000.0 / visualOptions.targetFrameRate).round(),
+      );
 
   /// Requests required runtime permissions on Android.
   ///
@@ -356,18 +359,20 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   }
 
   /// Current raw FFT frame snapshot.
-  FftFrame getCurrentRawFftFrame() => FftFrame(
-    position: _position,
-    values: _fftProcessor.latestRawFft,
-    isPlaying: _isPlaying,
-  );
+  FftFrame getCurrentRawFftFrame() =>
+      FftFrame(
+        position: _position,
+        values: _fftProcessor.latestRawFft,
+        isPlaying: _isPlaying,
+      );
 
   /// Current optimized FFT frame snapshot.
-  FftFrame getCurrentOptimizedFftFrame() => FftFrame(
-    position: _position,
-    values: _fftProcessor.latestOptimizedFft,
-    isPlaying: _isPlaying,
-  );
+  FftFrame getCurrentOptimizedFftFrame() =>
+      FftFrame(
+        position: _position,
+        values: _fftProcessor.latestOptimizedFft,
+        isPlaying: _isPlaying,
+      );
 
   /// Clears current [error].
   void clearError({bool notify = true}) {
@@ -433,21 +438,6 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     }
   }
 
-  /// Same as [getLoadedWaveform] but returns a stream of [WaveformChunk]s.
-  Stream<WaveformChunk> getLoadedWaveformStream({
-    required int expectedChunks,
-    int sampleStride = 1,
-  }) {
-    if (_selectedPath == null) {
-      return Stream.error('No audio loaded');
-    }
-    final clampedStride = sampleStride < 1 ? 1 : sampleStride;
-    return extractWaveformStreaming(
-      expectedChunks: BigInt.from(expectedChunks),
-      sampleStride: BigInt.from(clampedStride),
-    );
-  }
-
   /// Calculates the whole-track waveform for the given [filePath].
   ///
   /// The [outCount] parameter specifies how many normalized magnitude samples (0.0 to 1.0)
@@ -485,7 +475,9 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
       rawBins = List<double>.filled(rawBins.length, 0.0);
     }
 
-    final nowMicros = DateTime.now().microsecondsSinceEpoch;
+    final nowMicros = DateTime
+        .now()
+        .microsecondsSinceEpoch;
     final dtSec = _lastAnalysisMicros == 0
         ? _analysisInterval.inMicroseconds / 1000000.0
         : (nowMicros - _lastAnalysisMicros) / 1000000.0;
@@ -609,14 +601,15 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
 
   // State notifiers
   final StreamController<PlayerControllerState> _playlistStateController =
-      StreamController<PlayerControllerState>.broadcast();
+  StreamController<PlayerControllerState>.broadcast();
   late final ValueNotifier<PlayerControllerState> _playlistStateNotifier =
-      ValueNotifier<PlayerControllerState>(_buildControllerState());
+  ValueNotifier<PlayerControllerState>(_buildControllerState());
 
   /// All user-visible playlists (excludes internal __default__).
-  List<Playlist> get playlists => List<Playlist>.unmodifiable(
-    _playlists.where((p) => p.id != _defaultPlaylistId).toList(),
-  );
+  List<Playlist> get playlists =>
+      List<Playlist>.unmodifiable(
+        _playlists.where((p) => p.id != _defaultPlaylistId).toList(),
+      );
 
   /// Queue playlist backed by internal id `__default__`.
   Playlist? get queue => getPlaylistById(_defaultPlaylistId);
@@ -643,11 +636,12 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   int? get currentIndex => _currentIndex;
 
   /// Currently selected track, or `null` if no active playlist or nothing selected.
-  AudioTrack? get currentTrack => _currentIndex == null
-      ? null
-      : (_currentIndex! < _activePlaylistTracks.length
-            ? _activePlaylistTracks[_currentIndex!]
-            : null);
+  AudioTrack? get currentTrack =>
+      _currentIndex == null
+          ? null
+          : (_currentIndex! < _activePlaylistTracks.length
+          ? _activePlaylistTracks[_currentIndex!]
+          : null);
 
   /// Whether shuffle playback order is enabled.
   bool get shuffleEnabled => _shuffleEnabled;
@@ -669,12 +663,11 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   // === Playlist Collection Management ===
 
   /// Creates a new playlist and optionally sets it as active.
-  Future<void> createPlaylist(
-    String id,
-    String name, {
-    List<AudioTrack> items = const <AudioTrack>[],
-    bool setAsActive = false,
-  }) async {
+  Future<void> createPlaylist(String id,
+      String name, {
+        List<AudioTrack> items = const <AudioTrack>[],
+        bool setAsActive = false,
+      }) async {
     if (id == _defaultPlaylistId) {
       throw StateError('Cannot create playlist with reserved id "$id"');
     }
@@ -701,8 +694,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   }
 
   /// Updates a playlist's name and/or items.
-  Future<void> updatePlaylist(
-    String id, {
+  Future<void> updatePlaylist(String id, {
     String? name,
     List<AudioTrack>? items,
   }) async {
@@ -767,8 +759,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
 
   /// Sets the active playlist by id.
   /// Optionally starts playback at [startIndex] and with [autoPlay].
-  Future<void> setActivePlaylistById(
-    String id, {
+  Future<void> setActivePlaylistById(String id, {
     int startIndex = 0,
     bool autoPlay = false,
   }) async {
@@ -879,7 +870,8 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     final currentQueue = queue!;
     await updatePlaylist(
       _defaultPlaylistId,
-      items: List<AudioTrack>.from(currentQueue.items)..addAll(tracks),
+      items: List<AudioTrack>.from(currentQueue.items)
+        ..addAll(tracks),
     );
   }
 
@@ -1011,7 +1003,8 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     }
     final currentQueue = queue!;
     _assertValidIndex(index, currentQueue.items, 'index');
-    final updated = List<AudioTrack>.from(currentQueue.items)..removeAt(index);
+    final updated = List<AudioTrack>.from(currentQueue.items)
+      ..removeAt(index);
     await updatePlaylist(_defaultPlaylistId, items: updated);
   }
 
@@ -1265,7 +1258,9 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
         return;
       }
     }
-    final fileName = path.split(RegExp(r'[\\/]')).last;
+    final fileName = path
+        .split(RegExp(r'[\\/]'))
+        .last;
     _activePlaylistTracks
       ..clear()
       ..add(
@@ -1362,7 +1357,9 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
 
   void _suppressAutoAdvanceFor(Duration duration) {
     _autoAdvanceSuppressedUntilMicros =
-        DateTime.now().microsecondsSinceEpoch + duration.inMicroseconds;
+        DateTime
+            .now()
+            .microsecondsSinceEpoch + duration.inMicroseconds;
   }
 
   Future<void> _handleAutoTransitionIfNeeded({required bool wasPlaying}) async {
@@ -1372,13 +1369,15 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     if (_selectedPath == null || _activePlaylistTracks.isEmpty) {
       return;
     }
-    final now = DateTime.now().microsecondsSinceEpoch;
+    final now = DateTime
+        .now()
+        .microsecondsSinceEpoch;
     if (now < _autoAdvanceSuppressedUntilMicros) {
       return;
     }
     final reachedEnd =
         _duration.inMilliseconds > 0 &&
-        _position.inMilliseconds >= (_duration.inMilliseconds - 250);
+            _position.inMilliseconds >= (_duration.inMilliseconds - 250);
     if (!wasPlaying || _isPlaying || !reachedEnd) {
       return;
     }
@@ -1404,19 +1403,4 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     _playlistStateNotifier.dispose();
   }
 
-  /// Extracts the waveform of currently loaded audio extremely fast via a background Rust thread,
-  /// streaming the resulting chunks incrementally.
-  /// Each chunk provides the maximum absolute amplitude (peak) of its segment.
-  /// [expectedChunks] dictates the temporal resolution of the total extracted waveform.
-  /// [sampleStride] samples every Nth frame to trade accuracy for speed (1 = full scan).
-  Stream<WaveformChunk> extractWaveform({
-    required int expectedChunks,
-    int sampleStride = 1,
-  }) {
-    final clampedStride = sampleStride < 1 ? 1 : sampleStride;
-    return extractWaveformStreaming(
-      expectedChunks: BigInt.from(expectedChunks),
-      sampleStride: BigInt.from(clampedStride),
-    );
-  }
 }

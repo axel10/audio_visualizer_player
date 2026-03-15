@@ -1174,7 +1174,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     }
     _currentIndex = next;
     _syncOrderCursorFromCurrentIndex();
-    final shouldPlay = reason == PlaybackReason.user || _isPlaying;
+    final shouldPlay = _shouldAutoPlayAfterTransition(reason);
     await _loadCurrentTrack(autoPlay: shouldPlay);
     return true;
   }
@@ -1198,7 +1198,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     }
     _currentIndex = prev;
     _syncOrderCursorFromCurrentIndex();
-    final shouldPlay = reason == PlaybackReason.user || _isPlaying;
+    final shouldPlay = _shouldAutoPlayAfterTransition(reason);
     await _loadCurrentTrack(autoPlay: shouldPlay);
     return true;
   }
@@ -1413,6 +1413,13 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     }
     _playOrder.add(ci);
     _currentOrderCursor = _playOrder.length - 1;
+  }
+
+  bool _shouldAutoPlayAfterTransition(PlaybackReason reason) {
+    return reason == PlaybackReason.user ||
+        reason == PlaybackReason.autoNext ||
+        reason == PlaybackReason.ended ||
+        _isPlaying;
   }
 
   int? _resolveAdjacentIndex({required bool next}) {

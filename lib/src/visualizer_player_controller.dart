@@ -39,14 +39,17 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   AudioVisualizerPlayerController({
     this.fftSize = 1024,
     this.analysisFrequencyHz = 30.0,
+    Duration fadeDuration = Duration.zero,
     VisualizerOptimizationOptions visualOptions =
         const VisualizerOptimizationOptions(),
   }) : assert(fftSize > 0),
        assert(analysisFrequencyHz > 0),
+       assert(!fadeDuration.isNegative),
        assert(visualOptions.frequencyGroups > 0),
        assert(visualOptions.targetFrameRate > 0),
        assert(visualOptions.groupContrastExponent > 0) {
     _fftProcessor = FftProcessor(fftSize: fftSize, options: visualOptions);
+    _fadeDuration = fadeDuration;
   }
 
   /// FFT size requested from native analysis.
@@ -74,6 +77,10 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   int _positionAnchorMicros = 0;
 
   double _volume = 1.0;
+  double _appliedNativeVolume = 1.0;
+  Duration _fadeDuration = Duration.zero;
+  int _fadeSequence = 0;
+  bool _trackFadeTransitionActive = false;
   PlayerState _playerState = PlayerState.idle;
 
   late final FftProcessor _fftProcessor;
@@ -112,6 +119,9 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
 
   /// Output volume in range `0..1`.
   double get volume => _volume;
+
+  /// Fade duration applied when switching tracks.
+  Duration get fadeDuration => _fadeDuration;
 
   /// Current playback status.
   PlayerState get currentState => _playerState;
@@ -187,6 +197,13 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   /// This keeps backward compatibility with single-track usage and also syncs
   /// the internal playlist to one item when called directly.
   Future<void> loadFromPath(String path) async {
+    await _loadFromPathInternal(path);
+  }
+
+  Future<void> _loadFromPathInternal(
+    String path, {
+    double? nativeVolume,
+  }) async {
     clearError(notify: false);
     if (path.isEmpty) {
       _error = 'Selected file path is unavailable.';
@@ -206,7 +223,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
 
     try {
       await loadAudioFile(path: path);
-      await setAudioVolume(volume: _volume);
+      await _applyNativeVolume(nativeVolume ?? _volume);
     } catch (e) {
       _error = 'Load failed: $e';
       _playerState = PlayerState.error;
@@ -355,11 +372,20 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   Future<void> setVolume(double volume) async {
     _volume = volume.clamp(0.0, 1.0);
     try {
-      await setAudioVolume(volume: _volume);
+      if (!_trackFadeTransitionActive) {
+        await _applyNativeVolume(_volume);
+      }
     } catch (e) {
       _error = 'Set volume failed: $e';
     }
     _emitPlaylistState();
+    notifyListeners();
+  }
+
+  /// Sets fade duration used for per-track fade-out/fade-in transitions.
+  void setFadeDuration(Duration duration) {
+    assert(!duration.isNegative);
+    _fadeDuration = duration.isNegative ? Duration.zero : duration;
     notifyListeners();
   }
 
@@ -612,7 +638,10 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     _duration = nextDuration;
     _position = nextPosition;
     _isPlaying = state.isPlaying;
-    _volume = state.volume.clamp(0.0, 1.0);
+    _appliedNativeVolume = state.volume.clamp(0.0, 1.0);
+    if (!_trackFadeTransitionActive) {
+      _volume = _appliedNativeVolume;
+    }
 
     if (_isPlaying) {
       _playerState = PlayerState.playing;
@@ -685,8 +714,50 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     _lastAnalysisMicros = 0;
   }
 
+  Future<void> _applyNativeVolume(double volume) async {
+    final clamped = volume.clamp(0.0, 1.0);
+    await setAudioVolume(volume: clamped);
+    _appliedNativeVolume = clamped;
+  }
+
+  Future<bool> _fadeNativeVolume({
+    required double from,
+    required double to,
+    required Duration duration,
+    required int sequence,
+    bool followTargetVolume = false,
+  }) async {
+    if (duration <= Duration.zero) {
+      if (_fadeSequence != sequence) {
+        return false;
+      }
+      await _applyNativeVolume(followTargetVolume ? _volume : to);
+      return _fadeSequence == sequence;
+    }
+
+    final steps = math.max(1, (duration.inMilliseconds / 16).round());
+    final stepDelay = Duration(
+      microseconds: (duration.inMicroseconds / steps).round(),
+    );
+
+    for (var i = 1; i <= steps; i++) {
+      if (_fadeSequence != sequence) {
+        return false;
+      }
+      final progress = i / steps;
+      final endVolume = followTargetVolume ? _volume : to;
+      final nextVolume = from + ((endVolume - from) * progress);
+      await _applyNativeVolume(nextVolume);
+      if (i < steps) {
+        await Future<void>.delayed(stepDelay);
+      }
+    }
+    return _fadeSequence == sequence;
+  }
+
   @override
   void dispose() {
+    _fadeSequence++;
     _analysisTick?.cancel();
     _renderTick?.cancel();
     _playbackStateSubscription?.cancel();
@@ -1301,20 +1372,65 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
       return;
     }
     final uri = _activePlaylistTracks[index].uri;
-    _playlistInternalLoad = true;
+    final previousPath = _selectedPath;
+    final switchingTracks = previousPath != null && previousPath != uri;
+    final shouldFade = switchingTracks && _fadeDuration > Duration.zero;
+    final fadeSequence = ++_fadeSequence;
+    final activateFadeTracking = shouldFade && (_isPlaying || autoPlay);
+    if (activateFadeTracking) {
+      _trackFadeTransitionActive = true;
+    }
+
     try {
-      await loadFromPath(uri);
+      if (shouldFade && _isPlaying) {
+        final fadedOut = await _fadeNativeVolume(
+          from: _appliedNativeVolume,
+          to: 0.0,
+          duration: _fadeDuration,
+          sequence: fadeSequence,
+        );
+        if (!fadedOut) {
+          return;
+        }
+      }
+
+      _playlistInternalLoad = true;
+      try {
+        await _loadFromPathInternal(
+          uri,
+          nativeVolume: shouldFade && autoPlay ? 0.0 : _volume,
+        );
+      } finally {
+        _playlistInternalLoad = false;
+      }
+      if (_fadeSequence != fadeSequence) {
+        return;
+      }
+      if (position != null) {
+        await seek(position);
+      }
+      if (autoPlay) {
+        await play();
+        if (shouldFade) {
+          final fadedIn = await _fadeNativeVolume(
+            from: _appliedNativeVolume,
+            to: _volume,
+            duration: _fadeDuration,
+            sequence: fadeSequence,
+            followTargetVolume: true,
+          );
+          if (!fadedIn) {
+            return;
+          }
+        }
+      }
+      _emitPlaylistState();
+      notifyListeners();
     } finally {
-      _playlistInternalLoad = false;
+      if (_fadeSequence == fadeSequence) {
+        _trackFadeTransitionActive = false;
+      }
     }
-    if (position != null) {
-      await seek(position);
-    }
-    if (autoPlay) {
-      await play();
-    }
-    _emitPlaylistState();
-    notifyListeners();
   }
 
   Future<void> _syncActivePlaylistToPlaylists() async {

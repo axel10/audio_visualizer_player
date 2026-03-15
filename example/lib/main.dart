@@ -49,6 +49,7 @@ class _VisualizerDemoPageState extends State<VisualizerDemoPage> {
     _controller = AudioVisualizerPlayerController(
       fftSize: 1024,
       analysisFrequencyHz: 30,
+      fadeDuration: const Duration(milliseconds: 500),
       visualOptions: const VisualizerOptimizationOptions(
         smoothingCoefficient: 0.35,
         gravityCoefficient: 10,

@@ -14,8 +14,14 @@ crossbeam-channel = "0.5.15"
 rodio = { version = "0.22.1", default-features = true, features = ["symphonia-all"] }
 symphonia = { version = "0.5.5", features = ["all"] }
 
-realfft = { path = "realfft" }
+
 cpal = "0.17.3"
+realfft = "3.5.0"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
+
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk-context = "0.1"

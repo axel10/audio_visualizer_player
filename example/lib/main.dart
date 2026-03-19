@@ -7,7 +7,12 @@ import 'package:flutter/material.dart';
 import 'package:audio_visualizer_player/audio_visualizer_player.dart';
 import 'package:file_picker/file_picker.dart';
 
-void main() {
+void main() async {
+  // 确保 Flutter 绑定已初始化
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // 必须在调用任何 Rust 代码前初始化
+  await RustLib.init();
   runApp(const MyApp());
 }
 

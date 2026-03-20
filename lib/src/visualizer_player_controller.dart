@@ -56,6 +56,8 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   /// Output smoothing/grouping options for visualization.
   VisualizerOptimizationOptions get visualOptions => _fftProcessor.options;
 
+  static bool _rustLibInitialized = false;
+
   Timer? _analysisTick;
   Timer? _renderTick;
   StreamSubscription<PlaybackState>? _playbackStateSubscription;
@@ -197,12 +199,22 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
       return;
     }
 
-    try {
-      await RustLib.init();
-    } catch (e) {
-      _error = 'Rust bridge init failed: $e';
-      notifyListeners();
-      return;
+    if (!_rustLibInitialized) {
+      try {
+        await RustLib.init();
+        _rustLibInitialized = true;
+      } catch (e) {
+        // If it's already initialized (e.g. by another controller or in main()),
+        // we can safely ignore this specific error.
+        final errorStr = e.toString();
+        if (errorStr.contains('Should not initialize flutter_rust_bridge twice')) {
+          _rustLibInitialized = true;
+        } else {
+          _error = 'Rust bridge init failed: $e';
+          notifyListeners();
+          return;
+        }
+      }
     }
 
     _playbackStateSubscription = subscribePlaybackState().listen(

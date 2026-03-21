@@ -1,4 +1,5 @@
 pub mod controller;
+pub mod equalizer;
 pub mod fft;
 pub mod waveform;
 
@@ -7,9 +8,10 @@ use std::thread;
 use std::time::Duration;
 
 pub use controller::{
-    crossfade_to_audio_file, dispose_audio, get_audio_duration_ms, get_audio_position_ms,
-    get_latest_fft, get_loaded_audio_path, init_app, is_audio_playing, load_audio_file,
-    pause_audio, play_audio, seek_audio_ms, set_audio_volume, toggle_audio, PlaybackState,
+    crossfade_to_audio_file, dispose_audio, get_audio_duration_ms, get_audio_equalizer_config,
+    get_audio_position_ms, get_latest_fft, get_loaded_audio_path, init_app, is_audio_playing,
+    load_audio_file, pause_audio, play_audio, seek_audio_ms, set_audio_equalizer_config,
+    set_audio_volume, toggle_audio, PlaybackState,
 };
 pub use waveform::{extract_loaded_waveform, extract_waveform_for_path, WaveformChunk};
 

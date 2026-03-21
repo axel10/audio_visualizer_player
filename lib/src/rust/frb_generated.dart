@@ -5,6 +5,7 @@
 
 import 'api/simple.dart';
 import 'api/simple/controller.dart';
+import 'api/simple/equalizer.dart';
 import 'api/simple/waveform.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -66,7 +67,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.11.1';
 
   @override
-  int get rustContentHash => 724433875;
+  int get rustContentHash => -31163301;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -84,6 +85,8 @@ abstract class RustLibApi extends BaseApi {
 
   Future<void> crateApiSimpleControllerDisposeAudio();
 
+  Future<EqualizerConfig> crateApiSimpleEqualizerEqualizerConfigDefault();
+
   Future<Float32List> crateApiSimpleWaveformExtractLoadedWaveform({
     required BigInt expectedChunks,
     required BigInt sampleStride,
@@ -96,6 +99,8 @@ abstract class RustLibApi extends BaseApi {
   });
 
   Future<PlatformInt64> crateApiSimpleControllerGetAudioDurationMs();
+
+  Future<EqualizerConfig> crateApiSimpleControllerGetAudioEqualizerConfig();
 
   Future<PlatformInt64> crateApiSimpleControllerGetAudioPositionMs();
 
@@ -117,6 +122,10 @@ abstract class RustLibApi extends BaseApi {
 
   Future<void> crateApiSimpleControllerSeekAudioMs({
     required PlatformInt64 positionMs,
+  });
+
+  Future<void> crateApiSimpleControllerSetAudioEqualizerConfig({
+    required EqualizerConfig config,
   });
 
   Future<void> crateApiSimpleControllerSetAudioVolume({required double volume});
@@ -197,6 +206,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "dispose_audio", argNames: []);
 
   @override
+  Future<EqualizerConfig> crateApiSimpleEqualizerEqualizerConfigDefault() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 3,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_equalizer_config,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiSimpleEqualizerEqualizerConfigDefaultConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleEqualizerEqualizerConfigDefaultConstMeta =>
+      const TaskConstMeta(debugName: "equalizer_config_default", argNames: []);
+
+  @override
   Future<Float32List> crateApiSimpleWaveformExtractLoadedWaveform({
     required BigInt expectedChunks,
     required BigInt sampleStride,
@@ -210,7 +246,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 3,
+            funcId: 4,
             port: port_,
           );
         },
@@ -247,7 +283,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 4,
+            funcId: 5,
             port: port_,
           );
         },
@@ -277,7 +313,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 5,
+            funcId: 6,
             port: port_,
           );
         },
@@ -296,6 +332,36 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "get_audio_duration_ms", argNames: []);
 
   @override
+  Future<EqualizerConfig> crateApiSimpleControllerGetAudioEqualizerConfig() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 7,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_equalizer_config,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiSimpleControllerGetAudioEqualizerConfigConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleControllerGetAudioEqualizerConfigConstMeta =>
+      const TaskConstMeta(
+        debugName: "get_audio_equalizer_config",
+        argNames: [],
+      );
+
+  @override
   Future<PlatformInt64> crateApiSimpleControllerGetAudioPositionMs() {
     return handler.executeNormal(
       NormalTask(
@@ -304,7 +370,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 6,
+            funcId: 8,
             port: port_,
           );
         },
@@ -331,7 +397,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 7,
+            funcId: 9,
             port: port_,
           );
         },
@@ -358,7 +424,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 8,
+            funcId: 10,
             port: port_,
           );
         },
@@ -383,7 +449,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(name, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -408,7 +474,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 10,
+            funcId: 12,
             port: port_,
           );
         },
@@ -435,7 +501,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 11,
+            funcId: 13,
             port: port_,
           );
         },
@@ -463,7 +529,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 12,
+            funcId: 14,
             port: port_,
           );
         },
@@ -490,7 +556,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 13,
+            funcId: 15,
             port: port_,
           );
         },
@@ -517,7 +583,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 14,
+            funcId: 16,
             port: port_,
           );
         },
@@ -547,7 +613,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 15,
+            funcId: 17,
             port: port_,
           );
         },
@@ -566,6 +632,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "seek_audio_ms", argNames: ["positionMs"]);
 
   @override
+  Future<void> crateApiSimpleControllerSetAudioEqualizerConfig({
+    required EqualizerConfig config,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_box_autoadd_equalizer_config(config, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 18,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSimpleControllerSetAudioEqualizerConfigConstMeta,
+        argValues: [config],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSimpleControllerSetAudioEqualizerConfigConstMeta =>
+      const TaskConstMeta(
+        debugName: "set_audio_equalizer_config",
+        argNames: ["config"],
+      );
+
+  @override
   Future<void> crateApiSimpleControllerSetAudioVolume({
     required double volume,
   }) {
@@ -577,7 +676,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 16,
+            funcId: 19,
             port: port_,
           );
         },
@@ -603,7 +702,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_StreamSink_playback_state_Sse(sink, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 17)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 20)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -632,7 +731,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 18,
+            funcId: 21,
             port: port_,
           );
         },
@@ -677,9 +776,38 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  EqualizerConfig dco_decode_box_autoadd_equalizer_config(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_equalizer_config(raw);
+  }
+
+  @protected
+  EqualizerConfig dco_decode_equalizer_config(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    return EqualizerConfig(
+      enabled: dco_decode_bool(arr[0]),
+      bandCount: dco_decode_i_32(arr[1]),
+      preampDb: dco_decode_f_32(arr[2]),
+      bassBoostDb: dco_decode_f_32(arr[3]),
+      bassBoostFrequencyHz: dco_decode_f_32(arr[4]),
+      bassBoostQ: dco_decode_f_32(arr[5]),
+      bandGainsDb: dco_decode_list_prim_f_32_strict(arr[6]),
+    );
+  }
+
+  @protected
   double dco_decode_f_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as double;
+  }
+
+  @protected
+  int dco_decode_i_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
   }
 
   @protected
@@ -768,9 +896,44 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  EqualizerConfig sse_decode_box_autoadd_equalizer_config(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_equalizer_config(deserializer));
+  }
+
+  @protected
+  EqualizerConfig sse_decode_equalizer_config(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_enabled = sse_decode_bool(deserializer);
+    var var_bandCount = sse_decode_i_32(deserializer);
+    var var_preampDb = sse_decode_f_32(deserializer);
+    var var_bassBoostDb = sse_decode_f_32(deserializer);
+    var var_bassBoostFrequencyHz = sse_decode_f_32(deserializer);
+    var var_bassBoostQ = sse_decode_f_32(deserializer);
+    var var_bandGainsDb = sse_decode_list_prim_f_32_strict(deserializer);
+    return EqualizerConfig(
+      enabled: var_enabled,
+      bandCount: var_bandCount,
+      preampDb: var_preampDb,
+      bassBoostDb: var_bassBoostDb,
+      bassBoostFrequencyHz: var_bassBoostFrequencyHz,
+      bassBoostQ: var_bassBoostQ,
+      bandGainsDb: var_bandGainsDb,
+    );
+  }
+
+  @protected
   double sse_decode_f_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getFloat32();
+  }
+
+  @protected
+  int sse_decode_i_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getInt32();
   }
 
   @protected
@@ -839,12 +1002,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  int sse_decode_i_32(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return deserializer.buffer.getInt32();
-  }
-
-  @protected
   void sse_encode_AnyhowException(
     AnyhowException self,
     SseSerializer serializer,
@@ -883,9 +1040,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_equalizer_config(
+    EqualizerConfig self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_equalizer_config(self, serializer);
+  }
+
+  @protected
+  void sse_encode_equalizer_config(
+    EqualizerConfig self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_bool(self.enabled, serializer);
+    sse_encode_i_32(self.bandCount, serializer);
+    sse_encode_f_32(self.preampDb, serializer);
+    sse_encode_f_32(self.bassBoostDb, serializer);
+    sse_encode_f_32(self.bassBoostFrequencyHz, serializer);
+    sse_encode_f_32(self.bassBoostQ, serializer);
+    sse_encode_list_prim_f_32_strict(self.bandGainsDb, serializer);
+  }
+
+  @protected
   void sse_encode_f_32(double self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putFloat32(self);
+  }
+
+  @protected
+  void sse_encode_i_32(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putInt32(self);
   }
 
   @protected
@@ -949,11 +1136,5 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_usize(BigInt self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putBigUint64(self);
-  }
-
-  @protected
-  void sse_encode_i_32(int self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    serializer.buffer.putInt32(self);
   }
 }

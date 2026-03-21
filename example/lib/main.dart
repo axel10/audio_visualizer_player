@@ -153,7 +153,8 @@ class _VisualizerDemoPageState extends State<VisualizerDemoPage> {
     }
 
     await _controller.playlist.addTracks(tracks);
-    if (!_controller.player.isPlaying && _controller.player.currentPath != null) {
+    if (!_controller.player.isPlaying &&
+        _controller.player.currentPath != null) {
       await _controller.player.play();
     }
   }
@@ -213,7 +214,9 @@ class _VisualizerDemoPageState extends State<VisualizerDemoPage> {
                             ? () => _controller.player.togglePlayPause()
                             : null,
                         child: Icon(
-                          _controller.player.isPlaying ? Icons.pause : Icons.play_arrow,
+                          _controller.player.isPlaying
+                              ? Icons.pause
+                              : Icons.play_arrow,
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -299,16 +302,21 @@ class _VisualizerDemoPageState extends State<VisualizerDemoPage> {
                 ),
                 Slider(
                   value: _controller.player.duration.inMilliseconds > 0
-                      ? _controller.player.position.inMilliseconds.toDouble().clamp(
-                          0,
-                          _controller.player.duration.inMilliseconds.toDouble(),
-                        )
+                      ? _controller.player.position.inMilliseconds
+                            .toDouble()
+                            .clamp(
+                              0,
+                              _controller.player.duration.inMilliseconds
+                                  .toDouble(),
+                            )
                       : 0.0,
                   max: _controller.player.duration.inMilliseconds.toDouble() > 0
                       ? _controller.player.duration.inMilliseconds.toDouble()
                       : 1.0,
                   onChanged: (value) {
-                    _controller.player.seek(Duration(milliseconds: value.toInt()));
+                    _controller.player.seek(
+                      Duration(milliseconds: value.toInt()),
+                    );
                   },
                 ),
                 if (_controller.player.error != null) ...[
@@ -336,6 +344,8 @@ class _VisualizerDemoPageState extends State<VisualizerDemoPage> {
                   ),
                 ),
                 const SizedBox(height: 16),
+                _buildEqualizerPanel(context),
+                const SizedBox(height: 16),
                 // 双频谱可视化展示
                 Expanded(
                   child: AudioDropRegion(
@@ -352,7 +362,7 @@ class _VisualizerDemoPageState extends State<VisualizerDemoPage> {
                                   vertical: 4,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: Colors.purple.withOpacity(0.3),
+                                  color: Colors.purple.withValues(alpha: 0.3),
                                   borderRadius: BorderRadius.circular(4),
                                 ),
                                 child: const Text(
@@ -393,7 +403,7 @@ class _VisualizerDemoPageState extends State<VisualizerDemoPage> {
                                   vertical: 4,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: Colors.orange.withOpacity(0.3),
+                                  color: Colors.orange.withValues(alpha: 0.3),
                                   borderRadius: BorderRadius.circular(4),
                                 ),
                                 child: const Text(
@@ -440,6 +450,183 @@ class _VisualizerDemoPageState extends State<VisualizerDemoPage> {
     final seconds = d.inSeconds.remainder(60).toString().padLeft(2, '0');
     return '$minutes:$seconds';
   }
+
+  Widget _buildEqualizerPanel(BuildContext context) {
+    final config = _controller.equalizerConfig;
+    final bandCount = config.bandCount.clamp(
+      0,
+      AudioVisualizerPlayerController.maxEqualizerBands,
+    );
+    final bandCenters = _controller.getEqualizerBandCenters(
+      bandCount: bandCount,
+    );
+
+    return Card(
+      elevation: 0,
+      color: Theme.of(
+        context,
+      ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.55),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  'Equalizer',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(width: 12),
+                Switch(
+                  value: config.enabled,
+                  onChanged: (value) =>
+                      unawaited(_controller.setEqualizerEnabled(value)),
+                ),
+                const Spacer(),
+                DropdownButton<int>(
+                  value: bandCount == 0 ? 1 : bandCount,
+                  items: List.generate(
+                    AudioVisualizerPlayerController.maxEqualizerBands,
+                    (index) {
+                      final value = index + 1;
+                      return DropdownMenuItem(
+                        value: value,
+                        child: Text('$value bands'),
+                      );
+                    },
+                  ),
+                  onChanged: (value) {
+                    if (value != null) {
+                      unawaited(_controller.setEqualizerBandCount(value));
+                    }
+                  },
+                ),
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: _controller.resetEqualizerDefaults,
+                  child: const Text('Reset'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildEqualizerSlider(
+                    context,
+                    label: 'Preamp',
+                    value: config.preampDb,
+                    min: -12,
+                    max: 12,
+                    onChanged: (value) =>
+                        unawaited(_controller.setEqualizerPreamp(value)),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildEqualizerSlider(
+                    context,
+                    label: 'Bass Boost',
+                    value: config.bassBoostDb,
+                    min: 0,
+                    max: 12,
+                    onChanged: (value) =>
+                        unawaited(_controller.setBassBoost(value)),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 190,
+              child: bandCount <= 0
+                  ? const Center(child: Text('EQ is disabled by band count.'))
+                  : ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: bandCount,
+                      separatorBuilder: (context, index) =>
+                          const SizedBox(width: 10),
+                      itemBuilder: (context, index) {
+                        final gain = config.bandGainsDb[index].toDouble();
+                        final freq = bandCenters[index];
+                        return SizedBox(
+                          width: 44,
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                _formatBandFrequency(freq),
+                                textAlign: TextAlign.center,
+                                style: Theme.of(context).textTheme.labelSmall,
+                              ),
+                              Expanded(
+                                child: RotatedBox(
+                                  quarterTurns: -1,
+                                  child: Slider(
+                                    value: gain.clamp(-12.0, 12.0),
+                                    min: -12,
+                                    max: 12,
+                                    divisions: 48,
+                                    onChanged: (value) => unawaited(
+                                      _controller.setEqualizerBandGain(
+                                        index,
+                                        value,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                '${gain >= 0 ? '+' : ''}${gain.toStringAsFixed(1)}',
+                                style: Theme.of(context).textTheme.labelSmall,
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEqualizerSlider(
+    BuildContext context, {
+    required String label,
+    required double value,
+    required double min,
+    required double max,
+    required ValueChanged<double> onChanged,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: Theme.of(context).textTheme.labelLarge),
+        Slider(
+          value: value.clamp(min, max),
+          min: min,
+          max: max,
+          divisions: ((max - min) * 2).round(),
+          label: value.toStringAsFixed(1),
+          onChanged: onChanged,
+        ),
+        Text(
+          '${value >= 0 ? '+' : ''}${value.toStringAsFixed(1)} dB',
+          style: Theme.of(context).textTheme.labelSmall,
+        ),
+      ],
+    );
+  }
+
+  String _formatBandFrequency(double hz) {
+    if (hz >= 1000) {
+      return '${(hz / 1000).toStringAsFixed(hz >= 10_000 ? 0 : 1)}k';
+    }
+    return hz.round().toString();
+  }
 }
 
 class WaveformPainter extends CustomPainter {
@@ -460,7 +647,7 @@ class WaveformPainter extends CustomPainter {
       ..style = PaintingStyle.fill;
 
     final unplayedPaint = Paint()
-      ..color = Colors.grey.withOpacity(0.5)
+      ..color = Colors.grey.withValues(alpha: 0.5)
       ..style = PaintingStyle.fill;
 
     for (var i = 0; i < waveform.length; i++) {
@@ -511,7 +698,7 @@ class DemoSpectrumPainter extends CustomPainter {
     final bodyColor = color ?? const Color(0xFF2AD4FF);
     final bodyPaint = Paint()..color = bodyColor;
     final glowPaint = Paint()
-      ..color = bodyColor.withOpacity(0.5)
+      ..color = bodyColor.withValues(alpha: 0.5)
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
     final baseline = size.height - safeBottom;
 

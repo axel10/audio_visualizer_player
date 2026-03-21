@@ -1,3 +1,4 @@
+use super::equalizer::{EqSource, EqualizerConfig, EqualizerShared};
 use super::fft::{clear_fft_buffer, FftSource, RAW_FFT_BINS};
 use cpal::traits::{DeviceTrait, HostTrait};
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Source};
@@ -66,6 +67,7 @@ struct PlayerController {
     active_output_device_name: Option<String>,
     current_deck: Option<PlaybackDeck>,
     incoming_deck: Option<PlaybackDeck>,
+    equalizer: Arc<EqualizerShared>,
     volume: f32,
     transition_generation: u64,
     cached_path: Option<String>,
@@ -81,6 +83,7 @@ impl PlayerController {
             active_output_device_name: None,
             current_deck: None,
             incoming_deck: None,
+            equalizer: EqualizerShared::new(EqualizerConfig::default()),
             volume: 1.0,
             transition_generation: 0,
             cached_path: None,
@@ -207,13 +210,14 @@ impl PlayerController {
         clear_fft_buffer(&latest_fft);
         let player = self.create_player()?;
         player.set_volume((self.volume * gain).clamp(0.0, 1.0));
+        let eq_source = EqSource::new(source, Arc::clone(&self.equalizer));
         if clamped_offset > Duration::ZERO {
             player.append(FftSource::new(
-                source.skip_duration(clamped_offset),
+                eq_source.skip_duration(clamped_offset),
                 Arc::clone(&latest_fft),
             ));
         } else {
-            player.append(FftSource::new(source, Arc::clone(&latest_fft)));
+            player.append(FftSource::new(eq_source, Arc::clone(&latest_fft)));
         }
         if auto_play {
             player.play();
@@ -408,6 +412,7 @@ impl PlayerController {
         self.cached_pcm = None;
         self.cached_channels = 0;
         self.cached_sample_rate = 0;
+        self.equalizer = EqualizerShared::new(EqualizerConfig::default());
     }
 }
 
@@ -569,6 +574,22 @@ pub fn set_audio_volume(volume: f32) -> Result<(), String> {
         .map_err(|_| "player lock poisoned".to_string())?;
 
     c.set_master_volume(volume);
+    Ok(())
+}
+
+pub fn get_audio_equalizer_config() -> EqualizerConfig {
+    controller()
+        .lock()
+        .map(|c| c.equalizer.current_config())
+        .unwrap_or_default()
+}
+
+pub fn set_audio_equalizer_config(config: EqualizerConfig) -> Result<(), String> {
+    let c = controller()
+        .lock()
+        .map_err(|_| "player lock poisoned".to_string())?;
+
+    c.equalizer.set_config(config);
     Ok(())
 }
 

@@ -4,6 +4,7 @@
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
 import '../../frb_generated.dart';
+import 'equalizer.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `any_deck_playing`, `apply_master_volume`, `clear`, `controller`, `create_player`, `describe_output_device`, `dispose_audio`, `drive_crossfade`, `ensure_audio_output`, `invalidate_waveform_cache`, `is_playing`, `maybe_switch_to_new_default_output`, `new`, `open_current_default_output`, `open_deck_from_path`, `pause_all`, `play_all`, `playback_position`, `playback_state_snapshot`, `public_deck`, `public_path`, `public_position`, `replace_current_from_path`, `set_master_volume`, `settle_to_public_deck`, `snapshot_loaded_path`, `snapshot_playback_state`, `start_crossfade`, `start_default_output_monitor`, `toggle_all`, `warm_waveform_cache_for_public_path`
@@ -40,6 +41,14 @@ Future<void> seekAudioMs({required PlatformInt64 positionMs}) => RustLib
 
 Future<void> setAudioVolume({required double volume}) =>
     RustLib.instance.api.crateApiSimpleControllerSetAudioVolume(volume: volume);
+
+Future<EqualizerConfig> getAudioEqualizerConfig() =>
+    RustLib.instance.api.crateApiSimpleControllerGetAudioEqualizerConfig();
+
+Future<void> setAudioEqualizerConfig({required EqualizerConfig config}) =>
+    RustLib.instance.api.crateApiSimpleControllerSetAudioEqualizerConfig(
+      config: config,
+    );
 
 Future<void> disposeAudio() =>
     RustLib.instance.api.crateApiSimpleControllerDisposeAudio();

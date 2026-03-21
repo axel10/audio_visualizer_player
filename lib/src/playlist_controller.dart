@@ -4,19 +4,20 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 
 import 'playlist_models.dart';
-import 'player_models.dart';
 
 /// Manages playlists, tracks, and playback order (shuffle/repeat).
 class PlaylistController extends ChangeNotifier {
   PlaylistController({
-    required Future<void> Function({required bool autoPlay, Duration? position}) onLoadTrack,
+    required Future<void> Function({required bool autoPlay, Duration? position})
+    onLoadTrack,
     required Future<void> Function() onClearPlayback,
     required void Function() onNotifyParent,
-  })  : _onLoadTrack = onLoadTrack,
-        _onClearPlayback = onClearPlayback,
-        _onNotifyParent = onNotifyParent;
+  }) : _onLoadTrack = onLoadTrack,
+       _onClearPlayback = onClearPlayback,
+       _onNotifyParent = onNotifyParent;
 
-  final Future<void> Function({required bool autoPlay, Duration? position}) _onLoadTrack;
+  final Future<void> Function({required bool autoPlay, Duration? position})
+  _onLoadTrack;
   final Future<void> Function() _onClearPlayback;
   final void Function() _onNotifyParent;
 
@@ -35,21 +36,26 @@ class PlaylistController extends ChangeNotifier {
 
   /// All user-visible playlists.
   List<Playlist> get playlists => List<Playlist>.unmodifiable(
-        _playlists.where((p) => p.id != _defaultPlaylistId).toList(),
-      );
+    _playlists.where((p) => p.id != _defaultPlaylistId).toList(),
+  );
 
   /// Current active playlist.
   Playlist? get activePlaylist {
     if (_activePlaylistId == null) return null;
-    return _playlists.firstWhere((p) => p.id == _activePlaylistId, orElse: () => _playlists.first);
+    return _playlists.firstWhere(
+      (p) => p.id == _activePlaylistId,
+      orElse: () => _playlists.first,
+    );
   }
 
   /// Current active tracks.
-  List<AudioTrack> get items => List<AudioTrack>.unmodifiable(_activePlaylistTracks);
+  List<AudioTrack> get items =>
+      List<AudioTrack>.unmodifiable(_activePlaylistTracks);
 
   int? get currentIndex => _currentIndex;
 
-  AudioTrack? get currentTrack => _currentIndex == null || _currentIndex! >= _activePlaylistTracks.length
+  AudioTrack? get currentTrack =>
+      _currentIndex == null || _currentIndex! >= _activePlaylistTracks.length
       ? null
       : _activePlaylistTracks[_currentIndex!];
 
@@ -60,7 +66,11 @@ class PlaylistController extends ChangeNotifier {
 
   // --- Methods ---
 
-  Future<void> createPlaylist(String id, String name, {List<AudioTrack> items = const []}) async {
+  Future<void> createPlaylist(
+    String id,
+    String name, {
+    List<AudioTrack> items = const [],
+  }) async {
     if (id == _defaultPlaylistId) throw StateError('Reserved ID');
     if (_playlists.any((p) => p.id == id)) throw StateError('Exists');
     _playlists.add(Playlist(id: id, name: name, items: items));
@@ -68,18 +78,25 @@ class PlaylistController extends ChangeNotifier {
     _onNotifyParent();
   }
 
-  Future<void> setActivePlaylist(String id, {int startIndex = 0, bool autoPlay = false}) async {
-    final pl = _playlists.firstWhere((p) => p.id == id, orElse: () => throw StateError('Not found'));
+  Future<void> setActivePlaylist(
+    String id, {
+    int startIndex = 0,
+    bool autoPlay = false,
+  }) async {
+    final pl = _playlists.firstWhere(
+      (p) => p.id == id,
+      orElse: () => throw StateError('Not found'),
+    );
     _activePlaylistId = id;
     _activePlaylistTracks.clear();
     _activePlaylistTracks.addAll(pl.items);
-    
+
     if (_activePlaylistTracks.isEmpty) {
       _currentIndex = null;
     } else {
       _currentIndex = startIndex.clamp(0, _activePlaylistTracks.length - 1);
     }
-    
+
     _rebuildPlayOrder(keepCurrentAtFront: _shuffleEnabled);
     if (_currentIndex != null) {
       await _onLoadTrack(autoPlay: autoPlay);
@@ -131,7 +148,9 @@ class PlaylistController extends ChangeNotifier {
     return true;
   }
 
-  Future<bool> playPrevious({PlaybackReason reason = PlaybackReason.user}) async {
+  Future<bool> playPrevious({
+    PlaybackReason reason = PlaybackReason.user,
+  }) async {
     final prev = resolveAdjacentIndex(next: false);
     if (prev == null) return false;
     _currentIndex = prev;
@@ -143,12 +162,16 @@ class PlaylistController extends ChangeNotifier {
   }
 
   Future<void> moveTrack(int oldIndex, int newIndex) async {
-    if (oldIndex < 0 || oldIndex >= _activePlaylistTracks.length ||
-        newIndex < 0 || newIndex >= _activePlaylistTracks.length) return;
-    
+    if (oldIndex < 0 ||
+        oldIndex >= _activePlaylistTracks.length ||
+        newIndex < 0 ||
+        newIndex >= _activePlaylistTracks.length) {
+      return;
+    }
+
     final track = _activePlaylistTracks.removeAt(oldIndex);
     _activePlaylistTracks.insert(newIndex, track);
-    
+
     // Update currentIndex if affected
     if (_currentIndex != null) {
       if (_currentIndex == oldIndex) {
@@ -159,7 +182,7 @@ class PlaylistController extends ChangeNotifier {
         _currentIndex = _currentIndex! + 1;
       }
     }
-    
+
     _rebuildPlayOrder(keepCurrentAtFront: _shuffleEnabled);
     await _syncActivePlaylist();
     notifyListeners();
@@ -170,7 +193,7 @@ class PlaylistController extends ChangeNotifier {
     if (index < 0 || index >= _activePlaylistTracks.length) return;
     final removedCurrent = _currentIndex == index;
     _activePlaylistTracks.removeAt(index);
-    
+
     if (_activePlaylistTracks.isEmpty) {
       await clear();
       return;
@@ -227,7 +250,8 @@ class PlaylistController extends ChangeNotifier {
       if (cursor < _playOrder.length - 1) {
         return _playOrder[cursor + 1];
       } else {
-        if (_playlistMode == PlaylistMode.queueLoop || _playlistMode == PlaylistMode.autoQueueLoop) {
+        if (_playlistMode == PlaylistMode.queueLoop ||
+            _playlistMode == PlaylistMode.autoQueueLoop) {
           return _playOrder[0];
         }
         return null;
@@ -236,7 +260,8 @@ class PlaylistController extends ChangeNotifier {
       if (cursor > 0) {
         return _playOrder[cursor - 1];
       } else {
-        if (_playlistMode == PlaylistMode.queueLoop || _playlistMode == PlaylistMode.autoQueueLoop) {
+        if (_playlistMode == PlaylistMode.queueLoop ||
+            _playlistMode == PlaylistMode.autoQueueLoop) {
           return _playOrder.last;
         }
         return null;
@@ -259,7 +284,7 @@ class PlaylistController extends ChangeNotifier {
       _currentOrderCursor = null;
       return;
     }
-    
+
     final indices = List<int>.generate(len, (i) => i);
     if (_shuffleEnabled) {
       if (keepCurrentAtFront && _currentIndex != null) {
@@ -271,7 +296,9 @@ class PlaylistController extends ChangeNotifier {
       } else {
         indices.shuffle(_shuffleRandom);
         _playOrder.addAll(indices);
-        _currentOrderCursor = _currentIndex != null ? _playOrder.indexOf(_currentIndex!) : 0;
+        _currentOrderCursor = _currentIndex != null
+            ? _playOrder.indexOf(_currentIndex!)
+            : 0;
       }
     } else {
       _playOrder.addAll(indices);
@@ -283,14 +310,18 @@ class PlaylistController extends ChangeNotifier {
     if (_activePlaylistId == null) return;
     final idx = _playlists.indexWhere((p) => p.id == _activePlaylistId);
     if (idx >= 0) {
-      _playlists[idx] = _playlists[idx].copyWith(items: List.from(_activePlaylistTracks));
+      _playlists[idx] = _playlists[idx].copyWith(
+        items: List.from(_activePlaylistTracks),
+      );
     }
   }
 
   Future<void> _ensureDefaultPlaylist() async {
     if (_activePlaylistId != null) return;
     if (!_playlists.any((p) => p.id == _defaultPlaylistId)) {
-      _playlists.add(const Playlist(id: _defaultPlaylistId, name: 'Queue', items: []));
+      _playlists.add(
+        const Playlist(id: _defaultPlaylistId, name: 'Queue', items: []),
+      );
     }
     _activePlaylistId = _defaultPlaylistId;
   }

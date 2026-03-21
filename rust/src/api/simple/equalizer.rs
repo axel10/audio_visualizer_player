@@ -13,6 +13,8 @@ const DEFAULT_BASS_BOOST_HZ: f32 = 80.0;
 const DEFAULT_BASS_BOOST_Q: f32 = 0.75;
 const CONFIG_REFRESH_STRIDE: usize = 64;
 const EPSILON_GAIN_DB: f32 = 0.001;
+const SOFT_LIMIT_THRESHOLD: f32 = 0.95;
+const SOFT_LIMIT_KNEE_WIDTH: f32 = 0.05;
 
 #[derive(Debug, Clone)]
 pub struct EqualizerConfig {
@@ -295,7 +297,7 @@ impl EqualizerChain {
         for band in &mut self.bands {
             sample = band.process(sample);
         }
-        sample
+        soft_limit_sample(sample)
     }
 }
 
@@ -364,6 +366,19 @@ fn estimate_peak_gain(config: &EqualizerConfig, sample_rate: u32) -> f32 {
     } else {
         1.0
     }
+}
+
+fn soft_limit_sample(sample: f32) -> f32 {
+    let abs = sample.abs();
+    if abs <= SOFT_LIMIT_THRESHOLD {
+        return sample;
+    }
+
+    let sign = sample.signum();
+    let normalized = ((abs - SOFT_LIMIT_THRESHOLD) / SOFT_LIMIT_KNEE_WIDTH).clamp(0.0, 1.0);
+    let eased = normalized * normalized * (3.0 - 2.0 * normalized);
+    let limited = SOFT_LIMIT_THRESHOLD + SOFT_LIMIT_KNEE_WIDTH * eased;
+    sign * limited.min(1.0)
 }
 
 pub struct EqSource<S>

@@ -27,7 +27,10 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     FadeMode fadeMode = FadeMode.sequential,
     VisualizerOptimizationOptions visualOptions = const VisualizerOptimizationOptions(),
   }) {
-    player = PlayerController(onNotifyParent: notifyListeners);
+    player = PlayerController(
+      onNotifyParent: notifyListeners,
+      onHandlePlayRequested: _handlePlayRequested,
+    );
     player.setFadeConfig(duration: fadeDuration, mode: fadeMode);
 
     playlist = PlaylistController(
@@ -222,6 +225,23 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     if (hasNext != null) {
       await playlist.setActivePlaylist(playlist.activePlaylistId!, startIndex: hasNext, autoPlay: true);
     }
+  }
+
+  Future<bool> _handlePlayRequested() async {
+    if (playlist.items.isEmpty) return false;
+
+    if (playlist.mode == PlaylistMode.queue) {
+      final hasNext = playlist.resolveAdjacentIndex(next: true);
+      if (hasNext == null && playlist.activePlaylistId != null) {
+        await playlist.setActivePlaylist(
+          playlist.activePlaylistId!,
+          startIndex: 0,
+          autoPlay: true,
+        );
+        return true;
+      }
+    }
+    return false;
   }
 
   Future<List<double>> getWaveform({required int expectedChunks, int sampleStride = 1, String? filePath}) async {

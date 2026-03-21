@@ -10,9 +10,12 @@ import 'rust/api/simple.dart';
 class PlayerController extends ChangeNotifier {
   PlayerController({
     required void Function() onNotifyParent,
-  }) : _onNotifyParent = onNotifyParent;
+    Future<bool> Function()? onHandlePlayRequested,
+  }) : _onNotifyParent = onNotifyParent,
+       _onHandlePlayRequested = onHandlePlayRequested;
 
   final void Function() _onNotifyParent;
+  final Future<bool> Function()? _onHandlePlayRequested;
 
   String? _selectedPath;
   String? _error;
@@ -77,7 +80,16 @@ class PlayerController extends ChangeNotifier {
 
   Future<void> play() async {
     if (_selectedPath == null) return;
+
+    if (_playerState == PlayerState.completed && _onHandlePlayRequested != null) {
+      final handled = await _onHandlePlayRequested();
+      if (handled) return;
+    }
+
     try {
+      if (_playerState == PlayerState.completed) {
+        await seek(Duration.zero);
+      }
       await playAudio();
       _isPlaying = true;
       _playerState = PlayerState.playing;

@@ -4,6 +4,8 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/simple.dart';
+import 'api/simple/controller.dart';
+import 'api/simple/waveform.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'frb_generated.dart';
@@ -54,9 +56,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
       RustLibWire.fromExternalLibrary;
 
   @override
-  Future<void> executeRustInitializers() async {
-    await api.crateApiSimpleInitApp();
-  }
+  Future<void> executeRustInitializers() async {}
 
   @override
   ExternalLibraryLoaderConfig get defaultExternalLibraryLoaderConfig =>
@@ -66,7 +66,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.11.1';
 
   @override
-  int get rustContentHash => -1893060734;
+  int get rustContentHash => 724433875;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -77,51 +77,53 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
 }
 
 abstract class RustLibApi extends BaseApi {
-  Future<void> crateApiSimpleCrossfadeToAudioFile({
+  Future<void> crateApiSimpleControllerCrossfadeToAudioFile({
     required String path,
     required PlatformInt64 durationMs,
   });
 
-  Future<void> crateApiSimpleDisposeAudio();
+  Future<void> crateApiSimpleControllerDisposeAudio();
 
-  Future<Float32List> crateApiSimpleExtractLoadedWaveform({
+  Future<Float32List> crateApiSimpleWaveformExtractLoadedWaveform({
     required BigInt expectedChunks,
     required BigInt sampleStride,
   });
 
-  Future<Float32List> crateApiSimpleExtractWaveformForPath({
+  Future<Float32List> crateApiSimpleWaveformExtractWaveformForPath({
     required String path,
     required BigInt expectedChunks,
     required BigInt sampleStride,
   });
 
-  PlatformInt64 crateApiSimpleGetAudioDurationMs();
+  Future<PlatformInt64> crateApiSimpleControllerGetAudioDurationMs();
 
-  PlatformInt64 crateApiSimpleGetAudioPositionMs();
+  Future<PlatformInt64> crateApiSimpleControllerGetAudioPositionMs();
 
-  Float32List crateApiSimpleGetLatestFft();
+  Future<Float32List> crateApiSimpleControllerGetLatestFft();
 
-  String? crateApiSimpleGetLoadedAudioPath();
+  Future<String?> crateApiSimpleControllerGetLoadedAudioPath();
 
   String crateApiSimpleGreet({required String name});
 
-  Future<void> crateApiSimpleInitApp();
+  Future<void> crateApiSimpleControllerInitApp();
 
-  bool crateApiSimpleIsAudioPlaying();
+  Future<bool> crateApiSimpleControllerIsAudioPlaying();
 
-  Future<void> crateApiSimpleLoadAudioFile({required String path});
+  Future<void> crateApiSimpleControllerLoadAudioFile({required String path});
 
-  Future<void> crateApiSimplePauseAudio();
+  Future<void> crateApiSimpleControllerPauseAudio();
 
-  Future<void> crateApiSimplePlayAudio();
+  Future<void> crateApiSimpleControllerPlayAudio();
 
-  Future<void> crateApiSimpleSeekAudioMs({required PlatformInt64 positionMs});
+  Future<void> crateApiSimpleControllerSeekAudioMs({
+    required PlatformInt64 positionMs,
+  });
 
-  Future<void> crateApiSimpleSetAudioVolume({required double volume});
+  Future<void> crateApiSimpleControllerSetAudioVolume({required double volume});
 
   Stream<PlaybackState> crateApiSimpleSubscribePlaybackState();
 
-  Future<bool> crateApiSimpleToggleAudio();
+  Future<bool> crateApiSimpleControllerToggleAudio();
 }
 
 class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
@@ -133,7 +135,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   });
 
   @override
-  Future<void> crateApiSimpleCrossfadeToAudioFile({
+  Future<void> crateApiSimpleControllerCrossfadeToAudioFile({
     required String path,
     required PlatformInt64 durationMs,
   }) {
@@ -154,21 +156,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_unit,
           decodeErrorData: sse_decode_String,
         ),
-        constMeta: kCrateApiSimpleCrossfadeToAudioFileConstMeta,
+        constMeta: kCrateApiSimpleControllerCrossfadeToAudioFileConstMeta,
         argValues: [path, durationMs],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiSimpleCrossfadeToAudioFileConstMeta =>
+  TaskConstMeta get kCrateApiSimpleControllerCrossfadeToAudioFileConstMeta =>
       const TaskConstMeta(
         debugName: "crossfade_to_audio_file",
         argNames: ["path", "durationMs"],
       );
 
   @override
-  Future<void> crateApiSimpleDisposeAudio() {
+  Future<void> crateApiSimpleControllerDisposeAudio() {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
@@ -184,18 +186,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_unit,
           decodeErrorData: sse_decode_String,
         ),
-        constMeta: kCrateApiSimpleDisposeAudioConstMeta,
+        constMeta: kCrateApiSimpleControllerDisposeAudioConstMeta,
         argValues: [],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiSimpleDisposeAudioConstMeta =>
+  TaskConstMeta get kCrateApiSimpleControllerDisposeAudioConstMeta =>
       const TaskConstMeta(debugName: "dispose_audio", argNames: []);
 
   @override
-  Future<Float32List> crateApiSimpleExtractLoadedWaveform({
+  Future<Float32List> crateApiSimpleWaveformExtractLoadedWaveform({
     required BigInt expectedChunks,
     required BigInt sampleStride,
   }) {
@@ -216,21 +218,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_list_prim_f_32_strict,
           decodeErrorData: sse_decode_String,
         ),
-        constMeta: kCrateApiSimpleExtractLoadedWaveformConstMeta,
+        constMeta: kCrateApiSimpleWaveformExtractLoadedWaveformConstMeta,
         argValues: [expectedChunks, sampleStride],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiSimpleExtractLoadedWaveformConstMeta =>
+  TaskConstMeta get kCrateApiSimpleWaveformExtractLoadedWaveformConstMeta =>
       const TaskConstMeta(
         debugName: "extract_loaded_waveform",
         argNames: ["expectedChunks", "sampleStride"],
       );
 
   @override
-  Future<Float32List> crateApiSimpleExtractWaveformForPath({
+  Future<Float32List> crateApiSimpleWaveformExtractWaveformForPath({
     required String path,
     required BigInt expectedChunks,
     required BigInt sampleStride,
@@ -253,105 +255,125 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_list_prim_f_32_strict,
           decodeErrorData: sse_decode_String,
         ),
-        constMeta: kCrateApiSimpleExtractWaveformForPathConstMeta,
+        constMeta: kCrateApiSimpleWaveformExtractWaveformForPathConstMeta,
         argValues: [path, expectedChunks, sampleStride],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiSimpleExtractWaveformForPathConstMeta =>
+  TaskConstMeta get kCrateApiSimpleWaveformExtractWaveformForPathConstMeta =>
       const TaskConstMeta(
         debugName: "extract_waveform_for_path",
         argNames: ["path", "expectedChunks", "sampleStride"],
       );
 
   @override
-  PlatformInt64 crateApiSimpleGetAudioDurationMs() {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
+  Future<PlatformInt64> crateApiSimpleControllerGetAudioDurationMs() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 5,
+            port: port_,
+          );
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_i_64,
           decodeErrorData: null,
         ),
-        constMeta: kCrateApiSimpleGetAudioDurationMsConstMeta,
+        constMeta: kCrateApiSimpleControllerGetAudioDurationMsConstMeta,
         argValues: [],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiSimpleGetAudioDurationMsConstMeta =>
+  TaskConstMeta get kCrateApiSimpleControllerGetAudioDurationMsConstMeta =>
       const TaskConstMeta(debugName: "get_audio_duration_ms", argNames: []);
 
   @override
-  PlatformInt64 crateApiSimpleGetAudioPositionMs() {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
+  Future<PlatformInt64> crateApiSimpleControllerGetAudioPositionMs() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 6,
+            port: port_,
+          );
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_i_64,
           decodeErrorData: null,
         ),
-        constMeta: kCrateApiSimpleGetAudioPositionMsConstMeta,
+        constMeta: kCrateApiSimpleControllerGetAudioPositionMsConstMeta,
         argValues: [],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiSimpleGetAudioPositionMsConstMeta =>
+  TaskConstMeta get kCrateApiSimpleControllerGetAudioPositionMsConstMeta =>
       const TaskConstMeta(debugName: "get_audio_position_ms", argNames: []);
 
   @override
-  Float32List crateApiSimpleGetLatestFft() {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
+  Future<Float32List> crateApiSimpleControllerGetLatestFft() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 7)!;
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 7,
+            port: port_,
+          );
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_prim_f_32_strict,
           decodeErrorData: null,
         ),
-        constMeta: kCrateApiSimpleGetLatestFftConstMeta,
+        constMeta: kCrateApiSimpleControllerGetLatestFftConstMeta,
         argValues: [],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiSimpleGetLatestFftConstMeta =>
+  TaskConstMeta get kCrateApiSimpleControllerGetLatestFftConstMeta =>
       const TaskConstMeta(debugName: "get_latest_fft", argNames: []);
 
   @override
-  String? crateApiSimpleGetLoadedAudioPath() {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
+  Future<String?> crateApiSimpleControllerGetLoadedAudioPath() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 8,
+            port: port_,
+          );
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_opt_String,
           decodeErrorData: null,
         ),
-        constMeta: kCrateApiSimpleGetLoadedAudioPathConstMeta,
+        constMeta: kCrateApiSimpleControllerGetLoadedAudioPathConstMeta,
         argValues: [],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiSimpleGetLoadedAudioPathConstMeta =>
+  TaskConstMeta get kCrateApiSimpleControllerGetLoadedAudioPathConstMeta =>
       const TaskConstMeta(debugName: "get_loaded_audio_path", argNames: []);
 
   @override
@@ -378,7 +400,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "greet", argNames: ["name"]);
 
   @override
-  Future<void> crateApiSimpleInitApp() {
+  Future<void> crateApiSimpleControllerInitApp() {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
@@ -394,40 +416,45 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_unit,
           decodeErrorData: null,
         ),
-        constMeta: kCrateApiSimpleInitAppConstMeta,
+        constMeta: kCrateApiSimpleControllerInitAppConstMeta,
         argValues: [],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiSimpleInitAppConstMeta =>
+  TaskConstMeta get kCrateApiSimpleControllerInitAppConstMeta =>
       const TaskConstMeta(debugName: "init_app", argNames: []);
 
   @override
-  bool crateApiSimpleIsAudioPlaying() {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
+  Future<bool> crateApiSimpleControllerIsAudioPlaying() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 11,
+            port: port_,
+          );
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
           decodeErrorData: null,
         ),
-        constMeta: kCrateApiSimpleIsAudioPlayingConstMeta,
+        constMeta: kCrateApiSimpleControllerIsAudioPlayingConstMeta,
         argValues: [],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiSimpleIsAudioPlayingConstMeta =>
+  TaskConstMeta get kCrateApiSimpleControllerIsAudioPlayingConstMeta =>
       const TaskConstMeta(debugName: "is_audio_playing", argNames: []);
 
   @override
-  Future<void> crateApiSimpleLoadAudioFile({required String path}) {
+  Future<void> crateApiSimpleControllerLoadAudioFile({required String path}) {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
@@ -444,18 +471,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_unit,
           decodeErrorData: sse_decode_String,
         ),
-        constMeta: kCrateApiSimpleLoadAudioFileConstMeta,
+        constMeta: kCrateApiSimpleControllerLoadAudioFileConstMeta,
         argValues: [path],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiSimpleLoadAudioFileConstMeta =>
+  TaskConstMeta get kCrateApiSimpleControllerLoadAudioFileConstMeta =>
       const TaskConstMeta(debugName: "load_audio_file", argNames: ["path"]);
 
   @override
-  Future<void> crateApiSimplePauseAudio() {
+  Future<void> crateApiSimpleControllerPauseAudio() {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
@@ -471,18 +498,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_unit,
           decodeErrorData: sse_decode_String,
         ),
-        constMeta: kCrateApiSimplePauseAudioConstMeta,
+        constMeta: kCrateApiSimpleControllerPauseAudioConstMeta,
         argValues: [],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiSimplePauseAudioConstMeta =>
+  TaskConstMeta get kCrateApiSimpleControllerPauseAudioConstMeta =>
       const TaskConstMeta(debugName: "pause_audio", argNames: []);
 
   @override
-  Future<void> crateApiSimplePlayAudio() {
+  Future<void> crateApiSimpleControllerPlayAudio() {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
@@ -498,18 +525,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_unit,
           decodeErrorData: sse_decode_String,
         ),
-        constMeta: kCrateApiSimplePlayAudioConstMeta,
+        constMeta: kCrateApiSimpleControllerPlayAudioConstMeta,
         argValues: [],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiSimplePlayAudioConstMeta =>
+  TaskConstMeta get kCrateApiSimpleControllerPlayAudioConstMeta =>
       const TaskConstMeta(debugName: "play_audio", argNames: []);
 
   @override
-  Future<void> crateApiSimpleSeekAudioMs({required PlatformInt64 positionMs}) {
+  Future<void> crateApiSimpleControllerSeekAudioMs({
+    required PlatformInt64 positionMs,
+  }) {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
@@ -526,18 +555,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_unit,
           decodeErrorData: sse_decode_String,
         ),
-        constMeta: kCrateApiSimpleSeekAudioMsConstMeta,
+        constMeta: kCrateApiSimpleControllerSeekAudioMsConstMeta,
         argValues: [positionMs],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiSimpleSeekAudioMsConstMeta =>
+  TaskConstMeta get kCrateApiSimpleControllerSeekAudioMsConstMeta =>
       const TaskConstMeta(debugName: "seek_audio_ms", argNames: ["positionMs"]);
 
   @override
-  Future<void> crateApiSimpleSetAudioVolume({required double volume}) {
+  Future<void> crateApiSimpleControllerSetAudioVolume({
+    required double volume,
+  }) {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
@@ -554,40 +585,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_unit,
           decodeErrorData: sse_decode_String,
         ),
-        constMeta: kCrateApiSimpleSetAudioVolumeConstMeta,
+        constMeta: kCrateApiSimpleControllerSetAudioVolumeConstMeta,
         argValues: [volume],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiSimpleSetAudioVolumeConstMeta =>
+  TaskConstMeta get kCrateApiSimpleControllerSetAudioVolumeConstMeta =>
       const TaskConstMeta(debugName: "set_audio_volume", argNames: ["volume"]);
 
   @override
   Stream<PlaybackState> crateApiSimpleSubscribePlaybackState() {
     final sink = RustStreamSink<PlaybackState>();
-    unawaited(
-      handler.executeNormal(
-        NormalTask(
-          callFfi: (port_) {
-            final serializer = SseSerializer(generalizedFrbRustBinding);
-            sse_encode_StreamSink_playback_state_Sse(sink, serializer);
-            pdeCallFfi(
-              generalizedFrbRustBinding,
-              serializer,
-              funcId: 17,
-              port: port_,
-            );
-          },
-          codec: SseCodec(
-            decodeSuccessData: sse_decode_unit,
-            decodeErrorData: null,
-          ),
-          constMeta: kCrateApiSimpleSubscribePlaybackStateConstMeta,
-          argValues: [sink],
-          apiImpl: this,
+    handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_StreamSink_playback_state_Sse(sink, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 17)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: null,
         ),
+        constMeta: kCrateApiSimpleSubscribePlaybackStateConstMeta,
+        argValues: [sink],
+        apiImpl: this,
       ),
     );
     return sink.stream;
@@ -600,7 +624,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  Future<bool> crateApiSimpleToggleAudio() {
+  Future<bool> crateApiSimpleControllerToggleAudio() {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
@@ -616,14 +640,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_bool,
           decodeErrorData: sse_decode_String,
         ),
-        constMeta: kCrateApiSimpleToggleAudioConstMeta,
+        constMeta: kCrateApiSimpleControllerToggleAudioConstMeta,
         argValues: [],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiSimpleToggleAudioConstMeta =>
+  TaskConstMeta get kCrateApiSimpleControllerToggleAudioConstMeta =>
       const TaskConstMeta(debugName: "toggle_audio", argNames: []);
 
   @protected

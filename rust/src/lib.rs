@@ -1,8 +1,6 @@
 pub mod api;
 mod frb_generated;
 
-
-
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "C" fn JNI_OnLoad(vm: jni::JavaVM, res: *mut std::os::raw::c_void) -> jni::sys::jint {

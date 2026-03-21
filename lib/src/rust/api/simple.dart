@@ -5,105 +5,12 @@
 
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
+import 'simple/controller.dart';
 
-// These functions are ignored because they are not marked as `pub`: `any_deck_playing`, `apply_master_volume`, `clear_fft_buffer`, `clear`, `compute_fft`, `controller`, `create_player`, `describe_output_device`, `drive_crossfade`, `ensure_audio_output`, `extract_waveform_from_path`, `fold_packet_peaks_to_chunks`, `invalidate_waveform_cache`, `is_playing`, `maybe_switch_to_new_default_output`, `new`, `new`, `open_current_default_output`, `open_deck_from_path`, `pause_all`, `play_all`, `playback_position`, `playback_state`, `public_deck`, `public_path`, `public_position`, `push_mono_sample`, `push_state`, `replace_current_from_path`, `set_master_volume`, `settle_to_public_deck`, `start_crossfade`, `start_default_output_monitor`, `toggle_all`, `trigger_state_push`, `warm_waveform_cache_for_public_path`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `FftSource`, `PlaybackDeck`, `PlayerController`, `WaveformChunk`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `channels`, `clone`, `clone`, `current_span_len`, `fmt`, `fmt`, `next`, `sample_rate`, `total_duration`, `try_seek`
+// These functions are ignored because they are not marked as `pub`: `push_state`, `trigger_state_push`
 
 String greet({required String name}) =>
     RustLib.instance.api.crateApiSimpleGreet(name: name);
 
-Future<void> loadAudioFile({required String path}) =>
-    RustLib.instance.api.crateApiSimpleLoadAudioFile(path: path);
-
-Future<void> crossfadeToAudioFile({
-  required String path,
-  required PlatformInt64 durationMs,
-}) => RustLib.instance.api.crateApiSimpleCrossfadeToAudioFile(
-  path: path,
-  durationMs: durationMs,
-);
-
 Stream<PlaybackState> subscribePlaybackState() =>
     RustLib.instance.api.crateApiSimpleSubscribePlaybackState();
-
-Future<void> playAudio() => RustLib.instance.api.crateApiSimplePlayAudio();
-
-Future<void> pauseAudio() => RustLib.instance.api.crateApiSimplePauseAudio();
-
-Future<bool> toggleAudio() => RustLib.instance.api.crateApiSimpleToggleAudio();
-
-Future<void> seekAudioMs({required PlatformInt64 positionMs}) =>
-    RustLib.instance.api.crateApiSimpleSeekAudioMs(positionMs: positionMs);
-
-Future<void> setAudioVolume({required double volume}) =>
-    RustLib.instance.api.crateApiSimpleSetAudioVolume(volume: volume);
-
-Future<void> disposeAudio() =>
-    RustLib.instance.api.crateApiSimpleDisposeAudio();
-
-bool isAudioPlaying() => RustLib.instance.api.crateApiSimpleIsAudioPlaying();
-
-PlatformInt64 getAudioDurationMs() =>
-    RustLib.instance.api.crateApiSimpleGetAudioDurationMs();
-
-PlatformInt64 getAudioPositionMs() =>
-    RustLib.instance.api.crateApiSimpleGetAudioPositionMs();
-
-Float32List getLatestFft() => RustLib.instance.api.crateApiSimpleGetLatestFft();
-
-String? getLoadedAudioPath() =>
-    RustLib.instance.api.crateApiSimpleGetLoadedAudioPath();
-
-Future<Float32List> extractLoadedWaveform({
-  required BigInt expectedChunks,
-  required BigInt sampleStride,
-}) => RustLib.instance.api.crateApiSimpleExtractLoadedWaveform(
-  expectedChunks: expectedChunks,
-  sampleStride: sampleStride,
-);
-
-Future<Float32List> extractWaveformForPath({
-  required String path,
-  required BigInt expectedChunks,
-  required BigInt sampleStride,
-}) => RustLib.instance.api.crateApiSimpleExtractWaveformForPath(
-  path: path,
-  expectedChunks: expectedChunks,
-  sampleStride: sampleStride,
-);
-
-class PlaybackState {
-  final PlatformInt64 positionMs;
-  final PlatformInt64 durationMs;
-  final bool isPlaying;
-  final double volume;
-  final String? path;
-
-  const PlaybackState({
-    required this.positionMs,
-    required this.durationMs,
-    required this.isPlaying,
-    required this.volume,
-    this.path,
-  });
-
-  @override
-  int get hashCode =>
-      positionMs.hashCode ^
-      durationMs.hashCode ^
-      isPlaying.hashCode ^
-      volume.hashCode ^
-      path.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is PlaybackState &&
-          runtimeType == other.runtimeType &&
-          positionMs == other.positionMs &&
-          durationMs == other.durationMs &&
-          isPlaying == other.isPlaying &&
-          volume == other.volume &&
-          path == other.path;
-}

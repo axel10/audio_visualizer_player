@@ -8,7 +8,7 @@ import 'playlist_models.dart';
 import 'player_controller.dart';
 import 'playlist_controller.dart';
 import 'visualizer_controller.dart';
-import 'rust/api/simple.dart';
+import 'rust/api/simple_api.dart';
 import 'rust/frb_generated.dart';
 import 'fft_processor.dart';
 
@@ -42,7 +42,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     visualizer = VisualizerController(
       fftSize: fftSize,
       visualOptions: visualOptions,
-      getLatestFft: () => getLatestFft(),
+      getLatestFft: () => _latestFftCache,
       onNotifyParent: notifyListeners,
     );
   }
@@ -53,6 +53,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   late final PlayerController player;
   late final PlaylistController playlist;
   late final VisualizerController visualizer;
+  List<double> _latestFftCache = const [];
 
   static bool _rustLibInitialized = false;
   bool _initialized = false;
@@ -101,7 +102,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
       onError: (e) => player.setError('Playback subscription failed: $e'),
     );
 
-    _analysisTick = Timer.periodic(_analysisInterval, (_) => _onAnalysisTick());
+    _analysisTick = Timer.periodic(_analysisInterval, (_) => unawaited(_onAnalysisTick()));
     _renderTick = Timer.periodic(_renderInterval, (_) => _onRenderTick());
     
     visualizer.visualizerOutputManager.startAll();
@@ -149,7 +150,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
         await crossfadeToAudioFile(path: uri, durationMs: fadeDuration.inMilliseconds);
         if (player.fadeSequence != newSequence) return;
         
-        final durationMs = getAudioDurationMs();
+        final durationMs = await getAudioDurationMs();
         player.applySnapshot(uri, Duration.zero, Duration(milliseconds: durationMs.toInt()), true, player.volume);
         visualizer.resetState();
         notifyListeners();
@@ -187,7 +188,8 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   Duration get _analysisInterval => Duration(microseconds: (1000000.0 / analysisFrequencyHz).round());
   Duration get _renderInterval => Duration(microseconds: (1000000.0 / visualizer.options.targetFrameRate).round());
 
-  void _onAnalysisTick() {
+  Future<void> _onAnalysisTick() async {
+    await _refreshLatestFftCache();
     visualizer.processAnalysisTick(player.isPlaying, player.position);
   }
 
@@ -242,6 +244,15 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
       }
     }
     return false;
+  }
+
+  Future<void> _refreshLatestFftCache() async {
+    try {
+      _latestFftCache = (await getLatestFft()).map((value) => value.toDouble()).toList(growable: false);
+    } catch (e) {
+      player.setError('FFT fetch failed: $e');
+      _latestFftCache = const [];
+    }
   }
 
   Future<List<double>> getWaveform({required int expectedChunks, int sampleStride = 1, String? filePath}) async {

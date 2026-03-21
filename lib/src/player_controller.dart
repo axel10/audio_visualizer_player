@@ -4,7 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 
 import 'player_models.dart';
-import 'rust/api/simple.dart';
+import 'rust/api/simple_api.dart';
 
 /// Manages the actual audio engine session and transitions.
 class PlayerController extends ChangeNotifier {
@@ -64,7 +64,7 @@ class PlayerController extends ChangeNotifier {
     try {
       await loadAudioFile(path: path);
       await applyNativeVolume(nativeVolume ?? _volume);
-      final durationMs = getAudioDurationMs();
+      final durationMs = await getAudioDurationMs();
       _selectedPath = path;
       _position = Duration.zero;
       _duration = Duration(milliseconds: durationMs.toInt());

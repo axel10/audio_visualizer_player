@@ -12,6 +12,8 @@ import 'visualizer_controller.dart';
 import 'rust/api/simple_api.dart';
 import 'rust/frb_generated.dart';
 import 'fft_processor.dart';
+import 'player_state_snapshot.dart';
+import 'playback_transition.dart';
 
 export 'player_controller.dart';
 export 'playlist_controller.dart';
@@ -19,6 +21,8 @@ export 'random_playback_models.dart';
 export 'visualizer_controller.dart';
 export 'player_models.dart';
 export 'playlist_models.dart';
+export 'player_state_snapshot.dart';
+export 'playback_transition.dart';
 
 /// The top-level modular controller for audio playback and visualization.
 class AudioVisualizerPlayerController extends ChangeNotifier {
@@ -27,8 +31,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     this.analysisFrequencyHz = 30.0,
     Duration fadeDuration = Duration.zero,
     FadeMode fadeMode = FadeMode.sequential,
-    VisualizerOptimizationOptions visualOptions =
-        const VisualizerOptimizationOptions(),
+    VisualizerOptimizationOptions visualOptions = const VisualizerOptimizationOptions(),
   }) {
     player = PlayerController(
       onNotifyParent: notifyListeners,
@@ -62,15 +65,8 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   late final PlayerController player;
   late final PlaylistController playlist;
   late final VisualizerController visualizer;
-  EqualizerConfig _equalizerConfig = EqualizerConfig(
-    enabled: false,
-    bandCount: maxEqualizerBands,
-    preampDb: 0.0,
-    bassBoostDb: 0.0,
-    bassBoostFrequencyHz: equalizerBassBoostFrequencyHz,
-    bassBoostQ: equalizerBassBoostQ,
-    bandGainsDb: Float32List(maxEqualizerBands),
-  );
+
+  EqualizerConfig _equalizerConfig = _makeDefaultEqualizerConfig();
   List<double> _latestFftCache = const [];
 
   static bool _rustLibInitialized = false;
@@ -84,7 +80,8 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   bool get isInitialized => _initialized;
   EqualizerConfig get equalizerConfig => _equalizerConfig;
 
-  PlayerControllerState get state => PlayerControllerState(
+  /// Returns a full snapshot of the current state.
+  PlayerStateSnapshot get state => PlayerStateSnapshot(
     position: player.position,
     duration: player.duration,
     volume: player.volume,
@@ -95,6 +92,8 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     activePlaylist: playlist.activePlaylist,
     currentIndex: playlist.currentIndex,
     track: playlist.currentTrack,
+    error: player.error,
+    isTransitioning: _isTransitioning || player.isFadeActive,
   );
 
   Future<void> initialize() async {
@@ -109,9 +108,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
         await RustLib.init();
         _rustLibInitialized = true;
       } catch (e) {
-        if (!e.toString().contains(
-          'Should not initialize flutter_rust_bridge twice',
-        )) {
+        if (!e.toString().contains('Should not initialize flutter_rust_bridge twice')) {
           player.setError('Rust bridge init failed: $e');
           return;
         }
@@ -131,10 +128,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
       onError: (e) => player.setError('Playback subscription failed: $e'),
     );
 
-    _analysisTick = Timer.periodic(
-      _analysisInterval,
-      (_) => unawaited(_onAnalysisTick()),
-    );
+    _analysisTick = Timer.periodic(_analysisInterval, (_) => unawaited(_onAnalysisTick()));
     _renderTick = Timer.periodic(_renderInterval, (_) => _onRenderTick());
 
     visualizer.visualizerOutputManager.startAll();
@@ -154,92 +148,39 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     super.dispose();
   }
 
-  Future<void> _handleLoadTrack({
-    required bool autoPlay,
-    Duration? position,
-  }) async {
+  Future<void> _handleLoadTrack({required bool autoPlay, Duration? position}) async {
     final track = playlist.currentTrack;
     if (track == null) return;
 
-    final previousPath = player.currentPath;
-    final uri = track.uri;
-    final switchingTracks = previousPath != null && previousPath != uri;
-
-    final fadeDuration = player.fadeDuration;
-    final fadeMode = player.fadeMode;
+    final switchingTracks = player.currentPath != null && player.currentPath != track.uri;
     final isPlaying = player.isPlaying;
 
-    final shouldFade = switchingTracks && fadeDuration > Duration.zero;
-    final shouldCrossfade =
-        shouldFade &&
-        fadeMode == FadeMode.crossfade &&
-        isPlaying &&
-        autoPlay &&
-        position == null;
-    final shouldSequentialFade = shouldFade && !shouldCrossfade;
+    PlaybackTransition strategy = const ImmediateTransition();
 
-    player.nextFadeSequence();
-    final newSequence = player.fadeSequence;
-
-    if (shouldSequentialFade && (isPlaying || autoPlay)) {
-      player.setFadeActive(true);
+    if (switchingTracks && player.fadeDuration > Duration.zero) {
+      if (player.fadeMode == FadeMode.crossfade && isPlaying && autoPlay && position == null) {
+        strategy = CrossfadeTransition(duration: player.fadeDuration);
+      } else {
+        strategy = SequentialFadeTransition(
+          duration: player.fadeDuration,
+          targetVolume: player.volume,
+        );
+      }
     }
 
+    _isTransitioning = true;
+    notifyListeners();
     try {
-      if (shouldCrossfade) {
-        await crossfadeToAudioFile(
-          path: uri,
-          durationMs: fadeDuration.inMilliseconds,
-        );
-        if (player.fadeSequence != newSequence) return;
-
-        final durationMs = await getAudioDurationMs();
-        player.applySnapshot(
-          uri,
-          Duration.zero,
-          Duration(milliseconds: durationMs.toInt()),
-          true,
-          player.volume,
-        );
-        visualizer.resetState();
-        notifyListeners();
-        return;
-      }
-
-      if (shouldSequentialFade && isPlaying) {
-        final fadedOut = await player.fadeNativeVolume(
-          from: player.volume,
-          to: 0.0,
-          duration: fadeDuration,
-          sequence: newSequence,
-        );
-        if (!fadedOut) return;
-      }
-
-      await player.load(
-        uri,
-        nativeVolume: shouldSequentialFade && autoPlay ? 0.0 : player.volume,
+      await strategy.execute(
+        player: player,
+        uri: track.uri,
+        autoPlay: autoPlay,
+        position: position,
       );
-      if (player.fadeSequence != newSequence) return;
-
-      if (position != null) await player.seek(position);
-      if (autoPlay) {
-        await player.play();
-        if (shouldSequentialFade) {
-          await player.fadeNativeVolume(
-            from: 0.0,
-            to: player.volume,
-            duration: fadeDuration,
-            sequence: newSequence,
-            followTargetVolume: true,
-          );
-        }
-      }
       visualizer.resetState();
     } finally {
-      if (player.fadeSequence == newSequence) {
-        player.setFadeActive(false);
-      }
+      _isTransitioning = false;
+      notifyListeners();
     }
   }
 
@@ -248,11 +189,8 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     visualizer.resetState();
   }
 
-  Duration get _analysisInterval =>
-      Duration(microseconds: (1000000.0 / analysisFrequencyHz).round());
-  Duration get _renderInterval => Duration(
-    microseconds: (1000000.0 / visualizer.options.targetFrameRate).round(),
-  );
+  Duration get _analysisInterval => Duration(microseconds: (1000000.0 / analysisFrequencyHz).round());
+  Duration get _renderInterval => Duration(microseconds: (1000000.0 / visualizer.options.targetFrameRate).round());
 
   Future<void> _onAnalysisTick() async {
     await _refreshLatestFftCache();
@@ -261,16 +199,12 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
 
   void _onRenderTick() {
     _advanceLocalPosition();
-    visualizer.processRenderTick(
-      _renderInterval.inMicroseconds,
-      _analysisInterval.inMicroseconds,
-    );
+    visualizer.processRenderTick(_renderInterval.inMicroseconds, _analysisInterval.inMicroseconds);
   }
 
   void _advanceLocalPosition() {
     if (!player.isPlaying || player.currentPath == null) return;
-    final nextPosition = player.position + _renderInterval;
-    player.updatePosition(nextPosition);
+    player.updatePosition(player.position + _renderInterval);
 
     if (player.currentState == PlayerState.completed) {
       unawaited(_handleAutoTransition());
@@ -289,32 +223,18 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   }
 
   Future<void> _handleAutoTransition() async {
-    if (_isTransitioning) return;
-    if (player.currentState != PlayerState.completed) return;
+    if (_isTransitioning || player.currentState != PlayerState.completed) return;
 
-    // Special case for singleLoop: it must be handled here because playNext() for same index
-    // might be returning false or being ignored by setActivePlaylist-like logic.
     if (playlist.mode == PlaylistMode.singleLoop) {
-      _isTransitioning = true;
-      try {
-        await _handleLoadTrack(autoPlay: true);
-      } finally {
-        _isTransitioning = false;
-      }
+      await _handleLoadTrack(autoPlay: true);
       return;
     }
 
     if (playlist.mode == PlaylistMode.single) return;
 
-    _isTransitioning = true;
-    try {
-      final success = await playlist.playNext(reason: PlaybackReason.autoNext);
-      if (!success) {
-        // If we hit the end of the queue and it's not looping, we stay at completed.
-        // But if we want to support some "next playlist" logic, we'd do it here.
-      }
-    } finally {
-      _isTransitioning = false;
+    final success = await playlist.playNext(reason: PlaybackReason.autoNext);
+    if (!success) {
+      // End of queue logic could go here
     }
   }
 
@@ -326,13 +246,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
         playlist.mode == PlaylistMode.autoQueueLoop) {
       final hasNext = playlist.resolveAdjacentIndex(next: true);
       if (hasNext == null) {
-        // We are at the end of the queue and no next song available.
-        // Loop back to the first song (index 0) if user clicks Play.
-        await playlist.setActivePlaylist(
-          playlist.activePlaylistId!,
-          startIndex: 0,
-          autoPlay: true,
-        );
+        await playlist.setActivePlaylist(playlist.activePlaylistId!, startIndex: 0, autoPlay: true);
         return true;
       }
     }
@@ -341,20 +255,14 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
 
   Future<void> _refreshLatestFftCache() async {
     try {
-      _latestFftCache = (await getLatestFft())
-          .map((value) => value.toDouble())
-          .toList(growable: false);
+      _latestFftCache = (await getLatestFft()).map((value) => value.toDouble()).toList(growable: false);
     } catch (e) {
       player.setError('FFT fetch failed: $e');
       _latestFftCache = const [];
     }
   }
 
-  Future<List<double>> getWaveform({
-    required int expectedChunks,
-    int sampleStride = 1,
-    String? filePath,
-  }) async {
+  Future<List<double>> getWaveform({required int expectedChunks, int sampleStride = 1, String? filePath}) async {
     final targetPath = filePath ?? player.currentPath;
     if (targetPath == null) return const [];
     try {
@@ -376,25 +284,22 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     }
   }
 
+  // --- Equalizer Support ---
+
   Future<void> setEqualizerConfig(EqualizerConfig config) async {
     final normalized = _normalizeEqualizerConfig(config);
     try {
       await setAudioEqualizerConfig(config: normalized);
+      _equalizerConfig = normalized;
+      notifyListeners();
     } catch (e) {
       player.setError('Equalizer update failed: $e');
-      return;
     }
-    _equalizerConfig = normalized;
-    notifyListeners();
   }
 
-  Future<void> setEqualizerEnabled(bool enabled) async {
-    await setEqualizerConfig(_copyEqualizerConfig(enabled: enabled));
-  }
+  Future<void> setEqualizerEnabled(bool enabled) async => setEqualizerConfig(_copyEqualizerConfig(enabled: enabled));
 
-  Future<void> setEqualizerBandCount(int bandCount) async {
-    await setEqualizerConfig(_copyEqualizerConfig(bandCount: bandCount));
-  }
+  Future<void> setEqualizerBandCount(int bandCount) async => setEqualizerConfig(_copyEqualizerConfig(bandCount: bandCount));
 
   Future<void> setEqualizerBandGain(int bandIndex, double gainDb) async {
     if (bandIndex < 0 || bandIndex >= maxEqualizerBands) return;
@@ -403,33 +308,20 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     await setEqualizerConfig(_copyEqualizerConfig(bandGainsDb: gains));
   }
 
-  Future<void> setEqualizerPreamp(double preampDb) async {
-    await setEqualizerConfig(_copyEqualizerConfig(preampDb: preampDb));
-  }
+  Future<void> setEqualizerPreamp(double preampDb) async => setEqualizerConfig(_copyEqualizerConfig(preampDb: preampDb));
 
-  Future<void> setBassBoost(double gainDb) async {
-    await setEqualizerConfig(_copyEqualizerConfig(bassBoostDb: gainDb));
-  }
+  Future<void> setBassBoost(double gainDb) async => setEqualizerConfig(_copyEqualizerConfig(bassBoostDb: gainDb));
 
   void resetEqualizerDefaults() {
     unawaited(setEqualizerConfig(_makeDefaultEqualizerConfig()));
   }
 
   List<double> getEqualizerBandCenters({int? bandCount}) {
-    final count = (bandCount ?? _equalizerConfig.bandCount).clamp(
-      0,
-      maxEqualizerBands,
-    );
-    if (count <= 0) return const <double>[];
-    if (count == 1) return const <double>[1000.0];
+    final count = (bandCount ?? _equalizerConfig.bandCount).clamp(0, maxEqualizerBands);
+    if (count <= 0) return const [];
+    if (count == 1) return const [1000.0];
     final ratio = equalizerMaxFrequencyHz / equalizerMinFrequencyHz;
-    return List<double>.generate(
-      count,
-      (index) =>
-          equalizerMinFrequencyHz *
-          math.pow(ratio, index / (count - 1)).toDouble(),
-      growable: false,
-    );
+    return List.generate(count, (i) => equalizerMinFrequencyHz * math.pow(ratio, i / (count - 1)).toDouble(), growable: false);
   }
 
   static EqualizerConfig _makeDefaultEqualizerConfig() => EqualizerConfig(
@@ -443,15 +335,13 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   );
 
   EqualizerConfig _normalizeEqualizerConfig(EqualizerConfig config) {
-    final bandCount = config.bandCount.clamp(0, maxEqualizerBands);
     final gains = Float32List(maxEqualizerBands);
-    final source = config.bandGainsDb;
     for (var i = 0; i < maxEqualizerBands; i++) {
-      gains[i] = i < source.length ? source[i] : 0.0;
+        gains[i] = i < config.bandGainsDb.length ? config.bandGainsDb[i] : 0.0;
     }
     return EqualizerConfig(
       enabled: config.enabled,
-      bandCount: bandCount,
+      bandCount: config.bandCount.clamp(0, maxEqualizerBands),
       preampDb: config.preampDb,
       bassBoostDb: config.bassBoostDb,
       bassBoostFrequencyHz: config.bassBoostFrequencyHz,
@@ -460,23 +350,14 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
     );
   }
 
-  EqualizerConfig _copyEqualizerConfig({
-    bool? enabled,
-    int? bandCount,
-    double? preampDb,
-    double? bassBoostDb,
-    double? bassBoostFrequencyHz,
-    double? bassBoostQ,
-    Float32List? bandGainsDb,
-  }) {
+  EqualizerConfig _copyEqualizerConfig({bool? enabled, int? bandCount, double? preampDb, double? bassBoostDb, Float32List? bandGainsDb}) {
     return EqualizerConfig(
       enabled: enabled ?? _equalizerConfig.enabled,
       bandCount: bandCount ?? _equalizerConfig.bandCount,
       preampDb: preampDb ?? _equalizerConfig.preampDb,
       bassBoostDb: bassBoostDb ?? _equalizerConfig.bassBoostDb,
-      bassBoostFrequencyHz:
-          bassBoostFrequencyHz ?? _equalizerConfig.bassBoostFrequencyHz,
-      bassBoostQ: bassBoostQ ?? _equalizerConfig.bassBoostQ,
+      bassBoostFrequencyHz: _equalizerConfig.bassBoostFrequencyHz,
+      bassBoostQ: _equalizerConfig.bassBoostQ,
       bandGainsDb: bandGainsDb ?? _equalizerConfig.bandGainsDb,
     );
   }

@@ -1,4 +1,3 @@
-
 import 'package:flutter/foundation.dart';
 
 import 'playlist_models.dart';
@@ -39,13 +38,10 @@ class PlaylistController extends ChangeNotifier {
   );
 
   /// Current active playlist.
-  Playlist? get activePlaylist {
-    return playlistById(_activePlaylistId);
-  }
+  Playlist? get activePlaylist => playlistById(_activePlaylistId);
 
   /// Current active tracks.
-  List<AudioTrack> get items =>
-      List<AudioTrack>.unmodifiable(_activePlaylistTracks);
+  List<AudioTrack> get items => List<AudioTrack>.unmodifiable(_activePlaylistTracks);
 
   /// 当前播放项在活动列表中的索引。
   int? get currentIndex => _currentIndex;
@@ -61,26 +57,9 @@ class PlaylistController extends ChangeNotifier {
 
   /// Active random policy, or `null` if sequential playback is used.
   RandomPolicy? get randomPolicy => _randomManager.policy;
-
-  /// Whether any shuffle mode is currently enabled.
-  bool get shuffleEnabled => _randomManager.policy != null;
-
-  /// Whether the simple shuffle API is currently enabled.
-  bool get isShuffleEnabled => _randomManager.policy != null;
-
-  /// Stable id for the built-in queue playlist.
-  String get queuePlaylistId => _defaultPlaylistId;
-
   String? get activePlaylistId => _activePlaylistId;
-
-  /// Random history snapshot for UI/debugging.
+  String get queuePlaylistId => _defaultPlaylistId;
   List<RandomHistoryEntry> get randomHistory => _randomManager.history;
-
-  /// Current song index inside the active shuffle range.
-  int? get currentRangeIndex => _currentRangeIndex();
-
-  /// Current song index inside the shuffle history.
-  int? get currentHistoryIndex => _currentHistoryIndex();
 
   /// Returns a playlist by id, or `null` if it does not exist.
   Playlist? playlistById(String? id) {
@@ -93,16 +72,11 @@ class PlaylistController extends ChangeNotifier {
 
   // --- Methods ---
 
-  Future<void> createPlaylist(
-    String id,
-    String name, {
-    List<AudioTrack> items = const [],
-  }) async {
+  Future<void> createPlaylist(String id, String name, {List<AudioTrack> items = const []}) async {
     if (id == _defaultPlaylistId) throw StateError('Reserved ID');
     if (_playlists.any((p) => p.id == id)) throw StateError('Exists');
     _playlists.add(Playlist(id: id, name: name, items: items));
-    notifyListeners();
-    _onNotifyParent();
+    _notify();
   }
 
   Future<void> removePlaylist(String id) async {
@@ -110,50 +84,34 @@ class PlaylistController extends ChangeNotifier {
     if (_activePlaylistId == id) {
       await switchPlaylist(_defaultPlaylistId);
     }
-    notifyListeners();
-    _onNotifyParent();
+    _notify();
   }
 
-  Future<void> setActivePlaylist(
-    String id, {
-    int startIndex = 0,
-    bool autoPlay = false,
-  }) async {
+  Future<void> setActivePlaylist(String id, {int startIndex = 0, bool autoPlay = false}) async {
     final playlist = playlistById(id);
     if (playlist == null) return;
 
     final isSamePlaylist = _activePlaylistId == id;
     if (isSamePlaylist && _currentIndex == startIndex) {
-      // Still need to trigger a load if we are forcing it (e.g. current track replay)
       await _onLoadTrack(autoPlay: autoPlay);
       return;
     }
 
     _activePlaylistId = id;
     if (!isSamePlaylist) {
-      _activePlaylistTracks
-        ..clear()
-        ..addAll(playlist.items);
+      _activePlaylistTracks..clear()..addAll(playlist.items);
       _rebuildPlayOrder();
     }
 
-    if (_activePlaylistTracks.isNotEmpty) {
-      _currentIndex = startIndex.clamp(0, _activePlaylistTracks.length - 1).toInt();
-    } else {
-      _currentIndex = null;
-    }
+    _currentIndex = _activePlaylistTracks.isEmpty ? null : startIndex.clamp(0, _activePlaylistTracks.length - 1).toInt();
     
-    syncOrderCursorFromCurrentIndex();
-    reconcileRandomState();
+    _syncOrderCursor();
+    _reconcileRandom();
     await _onLoadTrack(autoPlay: autoPlay);
-    
-    notifyListeners();
-    _onNotifyParent();
+    _notify();
   }
 
-  Future<void> switchPlaylist(String id) async {
-    await setActivePlaylist(id);
-  }
+  Future<void> switchPlaylist(String id) async => setActivePlaylist(id);
 
   Future<void> addTracks(List<AudioTrack> tracks) async {
     final wasEmpty = _activePlaylistTracks.isEmpty;
@@ -163,15 +121,14 @@ class PlaylistController extends ChangeNotifier {
 
     if (wasEmpty && _activePlaylistTracks.isNotEmpty) {
       _currentIndex = 0;
-      reconcileRandomState();
+      _reconcileRandom();
       await _onLoadTrack(autoPlay: false);
     } else {
-      reconcileRandomState();
+      _reconcileRandom();
     }
 
-    await _syncActivePlaylist();
-    notifyListeners();
-    _onNotifyParent();
+    await _syncActivePlaylistData();
+    _notify();
   }
 
   Future<void> addTracksToPlaylist(String id, List<AudioTrack> tracks) async {
@@ -187,52 +144,38 @@ class PlaylistController extends ChangeNotifier {
 
         if (wasEmpty && _activePlaylistTracks.isNotEmpty) {
           _currentIndex = 0;
-          reconcileRandomState();
+          _reconcileRandom();
           await _onLoadTrack(autoPlay: false);
         } else {
-          reconcileRandomState();
+          _reconcileRandom();
         }
       }
-      notifyListeners();
-      _onNotifyParent();
+      _notify();
     }
   }
 
-  Future<void> updatePlaylistTracks(
-    String id,
-    List<AudioTrack> newTracks,
-  ) async {
+  Future<void> updatePlaylistTracks(String id, List<AudioTrack> newTracks) async {
     final idx = _playlists.indexWhere((p) => p.id == id);
     if (idx >= 0) {
       _playlists[idx] = _playlists[idx].copyWith(items: newTracks);
       if (_activePlaylistId == id) {
-        _activePlaylistTracks
-          ..clear()
-          ..addAll(newTracks);
-
         final currentId = currentTrack?.id;
-        final wasEmpty = _activePlaylistTracks.isEmpty;
+        _activePlaylistTracks..clear()..addAll(newTracks);
         _rebuildPlayOrder();
 
         if (currentId != null) {
           final newIdx = _activePlaylistTracks.indexWhere((t) => t.id == currentId);
           _currentIndex = newIdx >= 0 ? newIdx : null;
-          reconcileRandomState();
-          if (newIdx < 0) {
-            // Current track removed, load next available or clear
-            await _onLoadTrack(autoPlay: false);
-          }
+          _reconcileRandom();
+          if (newIdx < 0) await _onLoadTrack(autoPlay: false);
         } else {
           _currentIndex = _activePlaylistTracks.isNotEmpty ? 0 : null;
-          reconcileRandomState();
-          if (wasEmpty && _currentIndex != null) {
-            await _onLoadTrack(autoPlay: false);
-          }
+          _reconcileRandom();
+          if (newTracks.isNotEmpty) await _onLoadTrack(autoPlay: false);
         }
       }
+      _notify();
     }
-    notifyListeners();
-    _onNotifyParent();
   }
 
   Future<void> insertTrack(int index, AudioTrack track) async {
@@ -242,18 +185,17 @@ class PlaylistController extends ChangeNotifier {
 
     if (wasEmpty) {
       _currentIndex = 0;
-      reconcileRandomState();
+      _reconcileRandom();
       await _onLoadTrack(autoPlay: false);
     } else {
       if (_currentIndex != null && index <= _currentIndex!) {
         _currentIndex = _currentIndex! + 1;
       }
-      reconcileRandomState();
+      _reconcileRandom();
     }
 
-    await _syncActivePlaylist();
-    notifyListeners();
-    _onNotifyParent();
+    await _syncActivePlaylistData();
+    _notify();
   }
 
   Future<void> replaceTrack(AudioTrack track) async {
@@ -286,39 +228,32 @@ class PlaylistController extends ChangeNotifier {
 
     if (changed) {
       final current = currentTrack;
-      if (current != null &&
-          current.id == track.id &&
-          current.uri != track.uri) {
+      if (current != null && current.id == track.id && current.uri != track.uri) {
         await _onLoadTrack(autoPlay: false);
       }
-      notifyListeners();
-      _onNotifyParent();
+      _notify();
     }
   }
 
-  /// 跳到下一首，随机模式下会优先沿用随机历史。
   Future<bool> playNext({PlaybackReason reason = PlaybackReason.user}) async {
-    final resolution = _resolveAdjacentIndex(next: true, peek: false);
-    if (resolution.index == null) return false;
-    _currentIndex = resolution.index;
-    _afterCurrentIndexChanged(resolution);
+    final resolution = _resolveAdjacentIndex(next: true);
+    if (resolution == null) return false;
+    _currentIndex = resolution;
+    _syncOrderCursor();
+    _reconcileRandom();
     await _onLoadTrack(autoPlay: reason != PlaybackReason.playlistChanged);
-    notifyListeners();
-    _onNotifyParent();
+    _notify();
     return true;
   }
 
-  /// 跳到上一首，随机模式下会回退随机历史。
-  Future<bool> playPrevious({
-    PlaybackReason reason = PlaybackReason.user,
-  }) async {
-    final resolution = _resolveAdjacentIndex(next: false, peek: false);
-    if (resolution.index == null) return false;
-    _currentIndex = resolution.index;
-    _afterCurrentIndexChanged(resolution);
+  Future<bool> playPrevious({PlaybackReason reason = PlaybackReason.user}) async {
+    final resolution = _resolveAdjacentIndex(next: false);
+    if (resolution == null) return false;
+    _currentIndex = resolution;
+    _syncOrderCursor();
+    _reconcileRandom();
     await _onLoadTrack(autoPlay: reason != PlaybackReason.playlistChanged);
-    notifyListeners();
-    _onNotifyParent();
+    _notify();
     return true;
   }
 
@@ -344,10 +279,9 @@ class PlaylistController extends ChangeNotifier {
     }
 
     _rebuildPlayOrder();
-    reconcileRandomState();
-    await _syncActivePlaylist();
-    notifyListeners();
-    _onNotifyParent();
+    _reconcileRandom();
+    await _syncActivePlaylistData();
+    _notify();
   }
 
   Future<void> removeTrackAt(int index) async {
@@ -363,21 +297,17 @@ class PlaylistController extends ChangeNotifier {
     if (removedCurrent) {
       _currentIndex = index.clamp(0, _activePlaylistTracks.length - 1).toInt();
       _rebuildPlayOrder();
-      reconcileRandomState();
+      _reconcileRandom();
       await _onLoadTrack(autoPlay: false);
     } else {
-      if (_currentIndex != null && index < _currentIndex!) {
-        _currentIndex = _currentIndex! - 1;
-      }
+      if (_currentIndex != null && index < _currentIndex!) _currentIndex = _currentIndex! - 1;
       _rebuildPlayOrder();
-      reconcileRandomState();
+      _reconcileRandom();
     }
-    await _syncActivePlaylist();
-    notifyListeners();
-    _onNotifyParent();
+    await _syncActivePlaylistData();
+    _notify();
   }
 
-  /// 清空当前播放列表和播放状态。
   Future<void> clear() async {
     _activePlaylistTracks.clear();
     _playOrder.clear();
@@ -385,24 +315,17 @@ class PlaylistController extends ChangeNotifier {
     _currentOrderCursor = null;
     _randomManager.setPolicy(null);
     await _onClearPlayback();
-    await _syncActivePlaylist();
-    notifyListeners();
-    _onNotifyParent();
+    await _syncActivePlaylistData();
+    _notify();
   }
 
-  /// 确保内置队列播放列表已创建。
-  Future<void> ensureQueuePlaylist() async {
-    await _ensureDefaultPlaylist();
-  }
+  Future<void> ensureQueuePlaylist() async => _ensureDefaultPlaylist();
 
-  /// 设置顺序播放模式。
   void setMode(PlaylistMode mode) {
     _playlistMode = mode;
-    notifyListeners();
-    _onNotifyParent();
+    _notify();
   }
 
-  /// Configures the simple shuffle API used by most app code.
   void setShuffle({
     RandomScope? scope,
     RandomStrategy? strategy,
@@ -421,49 +344,74 @@ class PlaylistController extends ChangeNotifier {
       label: 'shuffle',
     );
     _randomManager.setPolicy(policy);
-    reconcileRandomState();
-    notifyListeners();
-    _onNotifyParent();
+    _reconcileRandom();
+    _notify();
   }
 
-  /// Legacy convenience alias for enabling or disabling shuffle quickly.
-  void setShuffleEnabled(bool enabled) {
-    if (!enabled) {
-      clearShuffle();
-      return;
-    }
-    setShuffle();
-  }
+  void clearShuffle() => setRandomPolicy(null);
 
-  /// Turns off the simple shuffle API and clears its history.
-  void clearShuffle() {
-    _randomManager.setPolicy(null);
-    notifyListeners();
-    _onNotifyParent();
-  }
-
-  /// 设置完整随机策略。
-  void setRandomPolicy(RandomPolicy? policy) {
-    _randomManager.setPolicy(policy);
-    reconcileRandomState();
-    notifyListeners();
-    _onNotifyParent();
-  }
-
-  /// 清除随机历史，但保留当前随机策略。
   void clearRandomHistory() {
     _randomManager.clearHistory();
-    notifyListeners();
-    _onNotifyParent();
+    _notify();
   }
 
-  /// Clears the simple shuffle history without disabling shuffle.
-  void clearShuffleHistory() {
-    clearRandomHistory();
+  void clearShuffleHistory() => clearRandomHistory();
+
+  void setRandomPolicy(RandomPolicy? policy) {
+    _randomManager.setPolicy(policy);
+    _reconcileRandom();
+    _notify();
   }
 
-  /// 让随机历史与当前播放状态对齐。
-  void reconcileRandomState() {
+  int? resolveAdjacentIndex({required bool next}) => _resolveAdjacentIndex(next: next, peek: true);
+
+  // --- Internal ---
+
+  int? _resolveAdjacentIndex({required bool next, bool peek = false}) {
+    if (_activePlaylistTracks.isEmpty || _playlistMode == PlaylistMode.single) return null;
+    if (_playlistMode == PlaylistMode.singleLoop) return _currentIndex ?? 0;
+
+    if (_randomManager.policy != null) {
+      return _randomManager.resolveAdjacentIndex(
+        next: next,
+        playlistId: _activePlaylistId,
+        tracks: _activePlaylistTracks,
+        loop: _playlistMode == PlaylistMode.queueLoop || _playlistMode == PlaylistMode.autoQueueLoop,
+        peek: peek,
+      );
+    }
+
+    return _resolveSequentialAdjacentIndex(next: next);
+  }
+
+  int? _resolveSequentialAdjacentIndex({required bool next}) {
+    if (_playOrder.isEmpty) return null;
+    if (_currentIndex == null) return 0;
+
+    final cursor = _currentOrderCursor ?? _playOrder.indexOf(_currentIndex!);
+    if (cursor < 0) return 0;
+
+    if (next) {
+      if (cursor < _playOrder.length - 1) return _playOrder[cursor + 1];
+      if (_playlistMode == PlaylistMode.queueLoop || _playlistMode == PlaylistMode.autoQueueLoop) return _playOrder[0];
+      return null;
+    }
+
+    if (cursor > 0) return _playOrder[cursor - 1];
+    if (_playlistMode == PlaylistMode.queueLoop || _playlistMode == PlaylistMode.autoQueueLoop) return _playOrder.last;
+    return null;
+  }
+
+  void _syncOrderCursor() {
+    if (_currentIndex == null) {
+      _currentOrderCursor = null;
+    } else {
+      final cursor = _playOrder.indexOf(_currentIndex!);
+      _currentOrderCursor = cursor >= 0 ? cursor : null;
+    }
+  }
+
+  void _reconcileRandom() {
     _randomManager.reconcile(
       playlistId: _activePlaylistId,
       tracks: _activePlaylistTracks,
@@ -471,144 +419,29 @@ class PlaylistController extends ChangeNotifier {
     );
   }
 
-  /// 仅计算下一首或上一首索引，不真正切歌。
-  int? resolveAdjacentIndex({required bool next}) {
-    return _resolveAdjacentIndex(next: next, peek: true).index;
-  }
-
-  /// 把当前索引同步到顺序播放游标。
-  void syncOrderCursorFromCurrentIndex() {
-    if (_currentIndex == null) {
-      _currentOrderCursor = null;
-      return;
-    }
-    final cursor = _playOrder.indexOf(_currentIndex!);
-    _currentOrderCursor = cursor >= 0 ? cursor : null;
-  }
-
-  /// 直接更新当前索引，并同步相关状态。
-  void updateCurrentIndex(int? index) {
-    _currentIndex = index;
-    syncOrderCursorFromCurrentIndex();
-    reconcileRandomState();
-  }
-
-  // --- Internal ---
-
-  _NavigationResolution _resolveAdjacentIndex({
-    required bool next,
-    bool peek = false,
-  }) {
-    if (_activePlaylistTracks.isEmpty) {
-      return const _NavigationResolution(index: null);
-    }
-
-    if (_playlistMode == PlaylistMode.single) {
-      return const _NavigationResolution(index: null);
-    }
-
-    if (_playlistMode == PlaylistMode.singleLoop) {
-      return _NavigationResolution(
-        index: _currentIndex ?? 0,
-      );
-    }
-
-    if (shuffleEnabled) {
-      final index = _randomManager.resolveAdjacentIndex(
-        next: next,
-        playlistId: _activePlaylistId,
-        tracks: _activePlaylistTracks,
-        loop: _playlistMode == PlaylistMode.queueLoop ||
-            _playlistMode == PlaylistMode.autoQueueLoop,
-        peek: peek,
-      );
-      return _NavigationResolution(index: index);
-    }
-
-    return _resolveSequentialAdjacentIndex(next: next);
-  }
-
-  _NavigationResolution _resolveSequentialAdjacentIndex({required bool next}) {
-    if (_playOrder.isEmpty) return const _NavigationResolution(index: null);
-    if (_currentIndex == null) return const _NavigationResolution(index: 0);
-
-    final cursor = _currentOrderCursor ?? _playOrder.indexOf(_currentIndex!);
-    if (cursor < 0) {
-      return const _NavigationResolution(index: 0);
-    }
-
-    if (next) {
-      if (cursor < _playOrder.length - 1) {
-        return _NavigationResolution(index: _playOrder[cursor + 1]);
-      }
-      if (_playlistMode == PlaylistMode.queueLoop ||
-          _playlistMode == PlaylistMode.autoQueueLoop) {
-        return _NavigationResolution(index: _playOrder[0]);
-      }
-      return const _NavigationResolution(index: null);
-    }
-
-    if (cursor > 0) {
-      return _NavigationResolution(index: _playOrder[cursor - 1]);
-    }
-    if (_playlistMode == PlaylistMode.queueLoop ||
-        _playlistMode == PlaylistMode.autoQueueLoop) {
-      return _NavigationResolution(index: _playOrder.last);
-    }
-    return const _NavigationResolution(index: null);
-  }
-
-  void _afterCurrentIndexChanged(_NavigationResolution resolution) {
-    syncOrderCursorFromCurrentIndex();
-    reconcileRandomState();
-  }
-
-  Future<void> _syncActivePlaylist() async {
+  Future<void> _syncActivePlaylistData() async {
     if (_activePlaylistId == null) return;
     final idx = _playlists.indexWhere((p) => p.id == _activePlaylistId);
     if (idx >= 0) {
-      _playlists[idx] = _playlists[idx].copyWith(
-        items: List.from(_activePlaylistTracks),
-      );
+      _playlists[idx] = _playlists[idx].copyWith(items: List.from(_activePlaylistTracks));
     }
   }
 
   Future<void> _ensureDefaultPlaylist() async {
     if (_activePlaylistId != null) return;
     if (!_playlists.any((p) => p.id == _defaultPlaylistId)) {
-      _playlists.add(
-        Playlist(id: _defaultPlaylistId, name: 'Queue', items: []),
-      );
+      _playlists.add(Playlist(id: _defaultPlaylistId, name: 'Queue', items: []));
     }
     _activePlaylistId = _defaultPlaylistId;
   }
 
   void _rebuildPlayOrder() {
-    _playOrder
-      ..clear()
-      ..addAll(List<int>.generate(_activePlaylistTracks.length, (i) => i));
-    syncOrderCursorFromCurrentIndex();
+    _playOrder..clear()..addAll(List<int>.generate(_activePlaylistTracks.length, (i) => i));
+    _syncOrderCursor();
   }
 
-  int? _currentRangeIndex() {
-    return _randomManager.currentRangeIndex(
-      playlistId: _activePlaylistId,
-      tracks: _activePlaylistTracks,
-      currentTrack: currentTrack,
-    );
+  void _notify() {
+    notifyListeners();
+    _onNotifyParent();
   }
-
-  int? _currentHistoryIndex() {
-    return _randomManager.currentHistoryIndex(
-      playlistId: _activePlaylistId,
-      currentTrack: currentTrack,
-    );
-  }
-}
-
-class _NavigationResolution {
-  const _NavigationResolution({
-    required this.index,
-  });
-  final int? index;
 }

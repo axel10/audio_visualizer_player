@@ -51,16 +51,12 @@ class PlayerController extends ChangeNotifier {
   Future<void> load(String path, {double? nativeVolume}) async {
     _error = null;
     if (path.isEmpty) {
-      _error = 'Selected file path is unavailable.';
-      _playerState = PlayerState.error;
-      notifyListeners();
-      _onNotifyParent();
+      setError('Selected file path is unavailable.');
       return;
     }
 
     _playerState = PlayerState.buffering;
-    notifyListeners();
-    _onNotifyParent();
+    _notify();
 
     try {
       await loadAudioFile(path: path);
@@ -73,11 +69,9 @@ class PlayerController extends ChangeNotifier {
       _isPlaying = false;
       _playerState = PlayerState.ready;
     } catch (e) {
-      _error = 'Load failed: $e';
-      _playerState = PlayerState.error;
+      setError('Load failed: $e');
     }
-    notifyListeners();
-    _onNotifyParent();
+    _notify();
   }
 
   Future<void> play() async {
@@ -97,11 +91,9 @@ class PlayerController extends ChangeNotifier {
       _isPlaying = true;
       _playerState = PlayerState.playing;
     } catch (e) {
-      _error = 'Play failed: $e';
-      _playerState = PlayerState.error;
+      setError('Play failed: $e');
     }
-    notifyListeners();
-    _onNotifyParent();
+    _notify();
   }
 
   Future<void> pause() async {
@@ -111,11 +103,9 @@ class PlayerController extends ChangeNotifier {
       _isPlaying = false;
       _playerState = PlayerState.paused;
     } catch (e) {
-      _error = 'Pause failed: $e';
-      _playerState = PlayerState.error;
+      setError('Pause failed: $e');
     }
-    notifyListeners();
-    _onNotifyParent();
+    _notify();
   }
 
   Future<void> togglePlayPause() async {
@@ -135,10 +125,9 @@ class PlayerController extends ChangeNotifier {
       _lastCommandTime = DateTime.now();
       _position = Duration(milliseconds: ms);
     } catch (e) {
-      _error = 'Seek failed: $e';
+      setError('Seek failed: $e');
     }
-    notifyListeners();
-    _onNotifyParent();
+    _notify();
   }
 
   Future<void> setVolume(double volume) async {
@@ -146,15 +135,13 @@ class PlayerController extends ChangeNotifier {
     if (!_trackFadeTransitionActive) {
       await applyNativeVolume(_volume);
     }
-    notifyListeners();
-    _onNotifyParent();
+    _notify();
   }
 
   void setFadeConfig({Duration? duration, FadeMode? mode}) {
     if (duration != null) _fadeDuration = duration;
     if (mode != null) _fadeMode = mode;
-    notifyListeners();
-    _onNotifyParent();
+    _notify();
   }
 
   Future<void> applyNativeVolume(double volume) async {
@@ -193,6 +180,7 @@ class PlayerController extends ChangeNotifier {
 
   void setFadeActive(bool active) {
     _trackFadeTransitionActive = active;
+    _notify();
   }
 
   void stopPlayback() {
@@ -201,8 +189,7 @@ class PlayerController extends ChangeNotifier {
     _duration = Duration.zero;
     _isPlaying = false;
     _playerState = PlayerState.idle;
-    notifyListeners();
-    _onNotifyParent();
+    _notify();
   }
 
   // --- External Sync Interface ---
@@ -229,15 +216,13 @@ class PlayerController extends ChangeNotifier {
       _playerState = PlayerState.paused;
     }
     
-    notifyListeners();
-    _onNotifyParent();
+    _notify();
   }
 
   void setError(String? message) {
     _error = message;
     if (message != null) _playerState = PlayerState.error;
-    notifyListeners();
-    _onNotifyParent();
+    _notify();
   }
 
   void updatePosition(Duration position) {
@@ -246,6 +231,10 @@ class PlayerController extends ChangeNotifier {
       _isPlaying = false;
       _playerState = PlayerState.completed;
     }
+    _notify();
+  }
+
+  void _notify() {
     notifyListeners();
     _onNotifyParent();
   }

@@ -1,0 +1,5 @@
+Analyzing audio_visualizer_player...                            
+
+   info - The import of 'dart:typed_data' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/foundation.dart' - lib\src\equalizer_controller.dart:2:8 - unnecessary_import
+   info - The variable name '_buildContext_internal' isn't a lowerCamelCase identifier - lib\src\random_playback_manager.dart:235:26 - non_constant_identifier_names
+

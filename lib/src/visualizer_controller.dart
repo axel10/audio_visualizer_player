@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import 'fft_frame.dart';
 import 'fft_processor.dart';
+import 'player_models.dart';
 import 'visualizer_output_config.dart';
 import 'visualizer_output_stream.dart';
 import 'visualizer_output_manager.dart';
@@ -14,15 +15,15 @@ class VisualizerController extends ChangeNotifier {
     required int fftSize,
     VisualizerOptimizationOptions visualOptions = const VisualizerOptimizationOptions(),
     required List<double> Function() getLatestFft,
-    required void Function() onNotifyParent,
+    required AudioVisualizerParent parent,
   }) : _getLatestFft = getLatestFft,
-       _onNotifyParent = onNotifyParent {
+       _parent = parent {
     _fftProcessor = FftProcessor(fftSize: fftSize, options: visualOptions);
     _initVisualizerOutputManager();
   }
 
   final List<double> Function() _getLatestFft;
-  final void Function() _onNotifyParent;
+  final AudioVisualizerParent _parent;
 
   late final FftProcessor _fftProcessor;
   late final VisualizerOutputManager visualizerOutputManager;
@@ -59,22 +60,19 @@ class VisualizerController extends ChangeNotifier {
     if (_fftEnabled == enabled) return;
     _fftEnabled = enabled;
     if (!_fftEnabled) resetState();
-    notifyListeners();
-    _onNotifyParent();
+    _notify();
   }
 
   void updateOptions(VisualizerOptimizationOptions options) {
     _fftProcessor.updateOptions(options);
-    notifyListeners();
-    _onNotifyParent();
+    _notify();
   }
 
   void resetState() {
     _fftProcessor.resetState();
     visualizerOutputManager.resetAll();
     _lastAnalysisMicros = 0;
-    notifyListeners();
-    _onNotifyParent();
+    _notify();
   }
 
   void processAnalysisTick(bool isPlaying, Duration position) {
@@ -125,6 +123,11 @@ class VisualizerController extends ChangeNotifier {
     _optimizedFftController.close();
     visualizerOutputManager.dispose();
     super.dispose();
+  }
+
+  void _notify() {
+    notifyListeners();
+    _parent.notifyListeners();
   }
 
   // --- Output Manager Proxy ---

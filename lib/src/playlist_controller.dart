@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import 'player_models.dart';
 import 'playlist_models.dart';
 import 'random_playback_models.dart';
 import 'random_playback_manager.dart';
@@ -7,18 +8,10 @@ import 'random_playback_manager.dart';
 /// Manages playlists, tracks, and playback order.
 class PlaylistController extends ChangeNotifier {
   PlaylistController({
-    required Future<void> Function({required bool autoPlay, Duration? position})
-    onLoadTrack,
-    required Future<void> Function() onClearPlayback,
-    required void Function() onNotifyParent,
-  }) : _onLoadTrack = onLoadTrack,
-       _onClearPlayback = onClearPlayback,
-       _onNotifyParent = onNotifyParent;
+    required AudioVisualizerParent parent,
+  }) : _parent = parent;
 
-  final Future<void> Function({required bool autoPlay, Duration? position})
-  _onLoadTrack;
-  final Future<void> Function() _onClearPlayback;
-  final void Function() _onNotifyParent;
+  final AudioVisualizerParent _parent;
 
   static const String _defaultPlaylistId = '__default__';
   final List<Playlist> _playlists = <Playlist>[];
@@ -93,7 +86,7 @@ class PlaylistController extends ChangeNotifier {
 
     final isSamePlaylist = _activePlaylistId == id;
     if (isSamePlaylist && _currentIndex == startIndex) {
-      await _onLoadTrack(autoPlay: autoPlay);
+      await _parent.loadTrack(autoPlay: autoPlay);
       return;
     }
 
@@ -107,7 +100,7 @@ class PlaylistController extends ChangeNotifier {
     
     _syncOrderCursor();
     _reconcileRandom();
-    await _onLoadTrack(autoPlay: autoPlay);
+    await _parent.loadTrack(autoPlay: autoPlay);
     _notify();
   }
 
@@ -122,7 +115,7 @@ class PlaylistController extends ChangeNotifier {
     if (wasEmpty && _activePlaylistTracks.isNotEmpty) {
       _currentIndex = 0;
       _reconcileRandom();
-      await _onLoadTrack(autoPlay: false);
+      await _parent.loadTrack(autoPlay: false);
     } else {
       _reconcileRandom();
     }
@@ -145,7 +138,7 @@ class PlaylistController extends ChangeNotifier {
         if (wasEmpty && _activePlaylistTracks.isNotEmpty) {
           _currentIndex = 0;
           _reconcileRandom();
-          await _onLoadTrack(autoPlay: false);
+          await _parent.loadTrack(autoPlay: false);
         } else {
           _reconcileRandom();
         }
@@ -167,11 +160,11 @@ class PlaylistController extends ChangeNotifier {
           final newIdx = _activePlaylistTracks.indexWhere((t) => t.id == currentId);
           _currentIndex = newIdx >= 0 ? newIdx : null;
           _reconcileRandom();
-          if (newIdx < 0) await _onLoadTrack(autoPlay: false);
+          if (newIdx < 0) await _parent.loadTrack(autoPlay: false);
         } else {
           _currentIndex = _activePlaylistTracks.isNotEmpty ? 0 : null;
           _reconcileRandom();
-          if (newTracks.isNotEmpty) await _onLoadTrack(autoPlay: false);
+          if (newTracks.isNotEmpty) await _parent.loadTrack(autoPlay: false);
         }
       }
       _notify();
@@ -186,7 +179,7 @@ class PlaylistController extends ChangeNotifier {
     if (wasEmpty) {
       _currentIndex = 0;
       _reconcileRandom();
-      await _onLoadTrack(autoPlay: false);
+      await _parent.loadTrack(autoPlay: false);
     } else {
       if (_currentIndex != null && index <= _currentIndex!) {
         _currentIndex = _currentIndex! + 1;
@@ -229,7 +222,7 @@ class PlaylistController extends ChangeNotifier {
     if (changed) {
       final current = currentTrack;
       if (current != null && current.id == track.id && current.uri != track.uri) {
-        await _onLoadTrack(autoPlay: false);
+        await _parent.loadTrack(autoPlay: false);
       }
       _notify();
     }
@@ -241,7 +234,7 @@ class PlaylistController extends ChangeNotifier {
     _currentIndex = resolution;
     _syncOrderCursor();
     _reconcileRandom();
-    await _onLoadTrack(autoPlay: reason != PlaybackReason.playlistChanged);
+    await _parent.loadTrack(autoPlay: reason != PlaybackReason.playlistChanged);
     _notify();
     return true;
   }
@@ -252,7 +245,7 @@ class PlaylistController extends ChangeNotifier {
     _currentIndex = resolution;
     _syncOrderCursor();
     _reconcileRandom();
-    await _onLoadTrack(autoPlay: reason != PlaybackReason.playlistChanged);
+    await _parent.loadTrack(autoPlay: reason != PlaybackReason.playlistChanged);
     _notify();
     return true;
   }
@@ -298,7 +291,7 @@ class PlaylistController extends ChangeNotifier {
       _currentIndex = index.clamp(0, _activePlaylistTracks.length - 1).toInt();
       _rebuildPlayOrder();
       _reconcileRandom();
-      await _onLoadTrack(autoPlay: false);
+      await _parent.loadTrack(autoPlay: false);
     } else {
       if (_currentIndex != null && index < _currentIndex!) _currentIndex = _currentIndex! - 1;
       _rebuildPlayOrder();
@@ -314,7 +307,7 @@ class PlaylistController extends ChangeNotifier {
     _currentIndex = null;
     _currentOrderCursor = null;
     _randomManager.setPolicy(null);
-    await _onClearPlayback();
+    await _parent.clearPlayback();
     await _syncActivePlaylistData();
     _notify();
   }
@@ -442,6 +435,6 @@ class PlaylistController extends ChangeNotifier {
 
   void _notify() {
     notifyListeners();
-    _onNotifyParent();
+    _parent.notifyListeners();
   }
 }

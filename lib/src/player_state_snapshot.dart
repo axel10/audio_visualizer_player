@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'player_models.dart';
 import 'playlist_models.dart';
 import 'random_playback_models.dart';
+import 'rust/api/simple_api.dart';
 
 /// An immutable snapshot of the entire player state at a specific point in time.
 @immutable
@@ -18,6 +19,7 @@ class PlayerStateSnapshot {
     this.currentIndex,
     this.track,
     this.error,
+    required this.equalizerConfig,
     this.isTransitioning = false,
   });
 
@@ -32,6 +34,7 @@ class PlayerStateSnapshot {
   final int? currentIndex;
   final AudioTrack? track;
   final String? error;
+  final EqualizerConfig equalizerConfig;
   final bool isTransitioning;
 
   PlayerStateSnapshot copyWith({
@@ -46,6 +49,7 @@ class PlayerStateSnapshot {
     int? currentIndex,
     AudioTrack? track,
     String? error,
+    EqualizerConfig? equalizerConfig,
     bool? isTransitioning,
   }) {
     return PlayerStateSnapshot(
@@ -60,6 +64,7 @@ class PlayerStateSnapshot {
       currentIndex: currentIndex ?? this.currentIndex,
       track: track ?? this.track,
       error: error ?? this.error,
+      equalizerConfig: equalizerConfig ?? this.equalizerConfig,
       isTransitioning: isTransitioning ?? this.isTransitioning,
     );
   }
@@ -80,6 +85,7 @@ class PlayerStateSnapshot {
           currentIndex == other.currentIndex &&
           track == other.track &&
           error == other.error &&
+          equalizerConfig == other.equalizerConfig &&
           isTransitioning == other.isTransitioning;
 
   @override
@@ -95,6 +101,7 @@ class PlayerStateSnapshot {
       currentIndex.hashCode ^
       track.hashCode ^
       error.hashCode ^
+      equalizerConfig.hashCode ^
       isTransitioning.hashCode;
 
   @override

@@ -1,6 +1,20 @@
 import 'playlist_models.dart';
 import 'random_playback_models.dart';
 
+/// Internal interface for sub-controllers to communicate with the main controller.
+abstract class AudioVisualizerParent {
+  void notifyListeners();
+
+  /// Called when a track needs to be loaded (e.g., from playlist navigation).
+  Future<void> loadTrack({required bool autoPlay, Duration? position});
+
+  /// Called when playback should be cleared.
+  Future<void> clearPlayback();
+
+  /// Called when a play request is made.
+  Future<bool> handlePlayRequested();
+}
+
 /// Track transition mode.
 enum FadeMode {
   /// Fade out the old track, then start and fade in the new one.

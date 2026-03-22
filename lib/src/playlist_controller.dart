@@ -119,22 +119,34 @@ class PlaylistController extends ChangeNotifier {
     int startIndex = 0,
     bool autoPlay = false,
   }) async {
-    if (_activePlaylistId == id && _currentIndex == startIndex) return;
-    _activePlaylistId = id;
     final playlist = playlistById(id);
-    if (playlist != null) {
+    if (playlist == null) return;
+
+    final isSamePlaylist = _activePlaylistId == id;
+    if (isSamePlaylist && _currentIndex == startIndex) {
+      // Still need to trigger a load if we are forcing it (e.g. current track replay)
+      await _onLoadTrack(autoPlay: autoPlay);
+      return;
+    }
+
+    _activePlaylistId = id;
+    if (!isSamePlaylist) {
       _activePlaylistTracks
         ..clear()
         ..addAll(playlist.items);
       _rebuildPlayOrder();
-      if (_activePlaylistTracks.isNotEmpty) {
-        _currentIndex = startIndex.clamp(0, _activePlaylistTracks.length - 1).toInt();
-      } else {
-        _currentIndex = null;
-      }
-      reconcileRandomState();
-      await _onLoadTrack(autoPlay: autoPlay);
     }
+
+    if (_activePlaylistTracks.isNotEmpty) {
+      _currentIndex = startIndex.clamp(0, _activePlaylistTracks.length - 1).toInt();
+    } else {
+      _currentIndex = null;
+    }
+    
+    syncOrderCursorFromCurrentIndex();
+    reconcileRandomState();
+    await _onLoadTrack(autoPlay: autoPlay);
+    
     notifyListeners();
     _onNotifyParent();
   }
@@ -144,10 +156,19 @@ class PlaylistController extends ChangeNotifier {
   }
 
   Future<void> addTracks(List<AudioTrack> tracks) async {
+    final wasEmpty = _activePlaylistTracks.isEmpty;
     await _ensureDefaultPlaylist();
     _activePlaylistTracks.addAll(tracks);
     _rebuildPlayOrder();
-    reconcileRandomState();
+
+    if (wasEmpty && _activePlaylistTracks.isNotEmpty) {
+      _currentIndex = 0;
+      reconcileRandomState();
+      await _onLoadTrack(autoPlay: false);
+    } else {
+      reconcileRandomState();
+    }
+
     await _syncActivePlaylist();
     notifyListeners();
     _onNotifyParent();
@@ -160,9 +181,17 @@ class PlaylistController extends ChangeNotifier {
         items: [..._playlists[idx].items, ...tracks],
       );
       if (_activePlaylistId == id) {
+        final wasEmpty = _activePlaylistTracks.isEmpty;
         _activePlaylistTracks.addAll(tracks);
         _rebuildPlayOrder();
-        reconcileRandomState();
+
+        if (wasEmpty && _activePlaylistTracks.isNotEmpty) {
+          _currentIndex = 0;
+          reconcileRandomState();
+          await _onLoadTrack(autoPlay: false);
+        } else {
+          reconcileRandomState();
+        }
       }
       notifyListeners();
       _onNotifyParent();
@@ -182,14 +211,23 @@ class PlaylistController extends ChangeNotifier {
           ..addAll(newTracks);
 
         final currentId = currentTrack?.id;
+        final wasEmpty = _activePlaylistTracks.isEmpty;
         _rebuildPlayOrder();
-        reconcileRandomState();
 
         if (currentId != null) {
           final newIdx = _activePlaylistTracks.indexWhere((t) => t.id == currentId);
           _currentIndex = newIdx >= 0 ? newIdx : null;
+          reconcileRandomState();
+          if (newIdx < 0) {
+            // Current track removed, load next available or clear
+            await _onLoadTrack(autoPlay: false);
+          }
         } else {
           _currentIndex = _activePlaylistTracks.isNotEmpty ? 0 : null;
+          reconcileRandomState();
+          if (wasEmpty && _currentIndex != null) {
+            await _onLoadTrack(autoPlay: false);
+          }
         }
       }
     }
@@ -198,12 +236,21 @@ class PlaylistController extends ChangeNotifier {
   }
 
   Future<void> insertTrack(int index, AudioTrack track) async {
+    final wasEmpty = _activePlaylistTracks.isEmpty;
     _activePlaylistTracks.insert(index, track);
-    if (_currentIndex != null && index <= _currentIndex!) {
-      _currentIndex = _currentIndex! + 1;
-    }
     _rebuildPlayOrder();
-    reconcileRandomState();
+
+    if (wasEmpty) {
+      _currentIndex = 0;
+      reconcileRandomState();
+      await _onLoadTrack(autoPlay: false);
+    } else {
+      if (_currentIndex != null && index <= _currentIndex!) {
+        _currentIndex = _currentIndex! + 1;
+      }
+      reconcileRandomState();
+    }
+
     await _syncActivePlaylist();
     notifyListeners();
     _onNotifyParent();
@@ -251,7 +298,7 @@ class PlaylistController extends ChangeNotifier {
 
   /// 跳到下一首，随机模式下会优先沿用随机历史。
   Future<bool> playNext({PlaybackReason reason = PlaybackReason.user}) async {
-    final resolution = _resolveAdjacentIndex(next: true);
+    final resolution = _resolveAdjacentIndex(next: true, peek: false);
     if (resolution.index == null) return false;
     _currentIndex = resolution.index;
     _afterCurrentIndexChanged(resolution);
@@ -265,7 +312,7 @@ class PlaylistController extends ChangeNotifier {
   Future<bool> playPrevious({
     PlaybackReason reason = PlaybackReason.user,
   }) async {
-    final resolution = _resolveAdjacentIndex(next: false);
+    final resolution = _resolveAdjacentIndex(next: false, peek: false);
     if (resolution.index == null) return false;
     _currentIndex = resolution.index;
     _afterCurrentIndexChanged(resolution);
@@ -426,7 +473,7 @@ class PlaylistController extends ChangeNotifier {
 
   /// 仅计算下一首或上一首索引，不真正切歌。
   int? resolveAdjacentIndex({required bool next}) {
-    return _resolveAdjacentIndex(next: next).index;
+    return _resolveAdjacentIndex(next: next, peek: true).index;
   }
 
   /// 把当前索引同步到顺序播放游标。
@@ -448,7 +495,10 @@ class PlaylistController extends ChangeNotifier {
 
   // --- Internal ---
 
-  _NavigationResolution _resolveAdjacentIndex({required bool next}) {
+  _NavigationResolution _resolveAdjacentIndex({
+    required bool next,
+    bool peek = false,
+  }) {
     if (_activePlaylistTracks.isEmpty) {
       return const _NavigationResolution(index: null);
     }
@@ -470,6 +520,7 @@ class PlaylistController extends ChangeNotifier {
         tracks: _activePlaylistTracks,
         loop: _playlistMode == PlaylistMode.queueLoop ||
             _playlistMode == PlaylistMode.autoQueueLoop,
+        peek: peek,
       );
       return _NavigationResolution(index: index);
     }

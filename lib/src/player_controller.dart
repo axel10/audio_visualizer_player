@@ -29,6 +29,7 @@ class PlayerController extends ChangeNotifier {
   int _fadeSequence = 0;
   bool _trackFadeTransitionActive = false;
   PlayerState _playerState = PlayerState.idle;
+  DateTime _lastCommandTime = DateTime.fromMillisecondsSinceEpoch(0);
 
   // --- Getters ---
   String? get currentPath => _selectedPath;
@@ -68,6 +69,7 @@ class PlayerController extends ChangeNotifier {
       _selectedPath = path;
       _position = Duration.zero;
       _duration = Duration(milliseconds: durationMs.toInt());
+      _lastCommandTime = DateTime.now();
       _isPlaying = false;
       _playerState = PlayerState.ready;
     } catch (e) {
@@ -91,6 +93,7 @@ class PlayerController extends ChangeNotifier {
         await seek(Duration.zero);
       }
       await playAudio();
+      _lastCommandTime = DateTime.now();
       _isPlaying = true;
       _playerState = PlayerState.playing;
     } catch (e) {
@@ -104,6 +107,7 @@ class PlayerController extends ChangeNotifier {
   Future<void> pause() async {
     try {
       await pauseAudio();
+      _lastCommandTime = DateTime.now();
       _isPlaying = false;
       _playerState = PlayerState.paused;
     } catch (e) {
@@ -128,6 +132,7 @@ class PlayerController extends ChangeNotifier {
     final ms = target.inMilliseconds.clamp(0, _duration.inMilliseconds);
     try {
       await seekAudioMs(positionMs: ms);
+      _lastCommandTime = DateTime.now();
       _position = Duration(milliseconds: ms);
     } catch (e) {
       _error = 'Seek failed: $e';
@@ -203,6 +208,11 @@ class PlayerController extends ChangeNotifier {
   // --- External Sync Interface ---
 
   void applySnapshot(String? path, Duration position, Duration duration, bool isPlaying, double nativeVolume) {
+    // Ignore snapshots shortly after a manual command to prevent UI jumping
+    if (DateTime.now().difference(_lastCommandTime) < const Duration(milliseconds: 500)) {
+      return;
+    }
+
     _selectedPath = path;
     _position = position;
     _duration = duration;

@@ -75,6 +75,7 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
 
   static bool _rustLibInitialized = false;
   bool _initialized = false;
+  bool _isTransitioning = false;
   Timer? _analysisTick;
   Timer? _renderTick;
   StreamSubscription<PlaybackState>? _playbackStateSubscription;
@@ -288,25 +289,45 @@ class AudioVisualizerPlayerController extends ChangeNotifier {
   }
 
   Future<void> _handleAutoTransition() async {
+    if (_isTransitioning) return;
     if (player.currentState != PlayerState.completed) return;
+
+    // Special case for singleLoop: it must be handled here because playNext() for same index
+    // might be returning false or being ignored by setActivePlaylist-like logic.
+    if (playlist.mode == PlaylistMode.singleLoop) {
+      _isTransitioning = true;
+      try {
+        await _handleLoadTrack(autoPlay: true);
+      } finally {
+        _isTransitioning = false;
+      }
+      return;
+    }
+
     if (playlist.mode == PlaylistMode.single) return;
 
-    final hasNext = playlist.resolveAdjacentIndex(next: true);
-    if (hasNext != null) {
-      await playlist.setActivePlaylist(
-        playlist.activePlaylistId!,
-        startIndex: hasNext,
-        autoPlay: true,
-      );
+    _isTransitioning = true;
+    try {
+      final success = await playlist.playNext(reason: PlaybackReason.autoNext);
+      if (!success) {
+        // If we hit the end of the queue and it's not looping, we stay at completed.
+        // But if we want to support some "next playlist" logic, we'd do it here.
+      }
+    } finally {
+      _isTransitioning = false;
     }
   }
 
   Future<bool> _handlePlayRequested() async {
     if (playlist.items.isEmpty) return false;
 
-    if (playlist.mode == PlaylistMode.queue) {
+    if (playlist.mode == PlaylistMode.queue ||
+        playlist.mode == PlaylistMode.queueLoop ||
+        playlist.mode == PlaylistMode.autoQueueLoop) {
       final hasNext = playlist.resolveAdjacentIndex(next: true);
-      if (hasNext == null && playlist.activePlaylistId != null) {
+      if (hasNext == null) {
+        // We are at the end of the queue and no next song available.
+        // Loop back to the first song (index 0) if user clicks Play.
         await playlist.setActivePlaylist(
           playlist.activePlaylistId!,
           startIndex: 0,

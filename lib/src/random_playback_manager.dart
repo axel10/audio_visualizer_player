@@ -131,6 +131,7 @@ class RandomPlaybackManager {
     required String? playlistId,
     required List<AudioTrack> tracks,
     required bool loop,
+    bool peek = false,
   }) {
     final policy = _policy;
     if (policy == null || tracks.isEmpty) return null;
@@ -148,21 +149,24 @@ class RandomPlaybackManager {
 
       if (next) {
         if (cursor != null && cursor < _deck.length - 1) {
-          _deckCursor = cursor + 1;
-          return _deck[_deckCursor!];
+          final target = cursor + 1;
+          if (!peek) _deckCursor = target;
+          return _deck[target];
         }
         if (loop) {
-          _deckCursor = 0;
+          if (!peek) _deckCursor = 0;
           return _deck[0];
         }
       } else {
         if (cursor != null && cursor > 0) {
-          _deckCursor = cursor - 1;
-          return _deck[_deckCursor!];
+          final target = cursor - 1;
+          if (!peek) _deckCursor = target;
+          return _deck[target];
         }
         if (loop) {
-          _deckCursor = _deck.length - 1;
-          return _deck[_deckCursor!];
+          final target = _deck.length - 1;
+          if (!peek) _deckCursor = target;
+          return _deck[target];
         }
       }
       return null;
@@ -172,16 +176,19 @@ class RandomPlaybackManager {
     final cursor = _historyCursor;
     if (cursor != null) {
       if (next && cursor < _history.length - 1) {
-        _historyCursor = cursor + 1;
-        return _history[_historyCursor!].trackIndex;
+        final target = cursor + 1;
+        if (!peek) _historyCursor = target;
+        return _history[target].trackIndex;
       }
       if (!next && cursor > 0) {
-        _historyCursor = cursor - 1;
-        return _history[_historyCursor!].trackIndex;
+        final target = cursor - 1;
+        if (!peek) _historyCursor = target;
+        return _history[target].trackIndex;
       }
       if (!next && loop && _history.isNotEmpty) {
-        _historyCursor = _history.length - 1; // Loop to end of history
-        return _history[_historyCursor!].trackIndex;
+        final target = _history.length - 1;
+        if (!peek) _historyCursor = target;
+        return _history[target].trackIndex;
       }
     }
 
@@ -207,6 +214,8 @@ class RandomPlaybackManager {
 
     final usable = filtered.isEmpty ? candidates : filtered;
     final selected = policy.strategy.select(_random, usable, context);
+
+    if (peek) return selected;
 
     // Record in history if it's a new "next" selection
     _appendHistory(

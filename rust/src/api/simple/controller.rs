@@ -369,92 +369,44 @@ impl PlayerController {
         Ok(())
     }
 
-    fn spawn_safe_audio_reconstruction(&mut self, force: bool) {
-        let current_sink_exists = self.sink.is_some();
-        let active_name = self.active_output_device_name.clone();
+    fn poll_output_device(&mut self) {
+        let current_default_device = rodio::cpal::default_host().default_output_device();
+        let current_name = current_default_device.as_ref().map(describe_output_device);
 
-        thread::spawn(move || {
-            // 1. Initial check (cheap check before heavy taking)
-            if !force {
-                if !current_sink_exists {
-                    return;
-                }
-                if let Some(current_default_device) = rodio::cpal::default_host().default_output_device() {
-                    let current_default_name = describe_output_device(&current_default_device);
-                    if active_name.as_deref() == Some(current_default_name.as_str()) {
-                        return;
-                    }
-                } else {
-                    return;
-                }
-            }
+        if self.active_output_device_name == current_name && self.sink.is_some() {
+            return;
+        }
 
-            info!("[AudioDeviceMonitor] Starting safe audio reconstruction...");
+        info!(
+            "[AudioDeviceMonitor] Output device change detected: {:?} -> {:?}",
+            self.active_output_device_name, current_name
+        );
 
-            // 2. Pause and Take resources
-            let old_resources = if let Ok(mut c) = controller().lock() {
-                let was_playing = c.any_deck_playing();
-                c.pause_all(); // Pause immediately as requested
+        let was_playing = self.any_deck_playing();
+        let pos = self.public_position();
+        let path = self.public_path().map(str::to_string);
 
-                let pos = c.public_position();
-                let path = c.public_path().map(str::to_string);
+        // Clear current output
+        self.sink = None;
+        self.active_output_device_name = None;
+        if let Some(d) = self.current_deck.take() {
+            d.clear();
+        }
+        if let Some(d) = self.incoming_deck.take() {
+            d.clear();
+        }
 
-                c.transition_generation = c.transition_generation.wrapping_add(1);
-                let incoming = c.incoming_deck.take();
-                let current = c.current_deck.take();
-                let sink = c.sink.take();
-
-                Some((pos, path, was_playing, incoming, current, sink))
-            } else {
-                None
-            };
-
-            let Some((pos, path, was_playing, old_incoming, old_current, old_sink)) = old_resources else {
-                return;
-            };
-
-            // 3. Wait 0.1 second before resuming on new device
-            thread::sleep(Duration::from_millis(100));
-
-            // 4. Re-open output
-            let open_result = PlayerController::open_current_default_output();
-            
-            let (new_sink, device_name) = match open_result {
-                Ok(res) => res,
-                Err(e) => {
-                    info!("[AudioDeviceMonitor] Failed to re-open audio output: {}", e);
-                    // Standard cleanup on failure
-                    if let Some(d) = old_incoming { d.clear(); }
-                    if let Some(d) = old_current { d.clear(); }
-                    drop(old_sink);
-                    return;
-                }
-            };
-
-            // 5. Restore state on new device
-            if let Ok(mut c) = controller().lock() {
-                c.sink = Some(new_sink);
-                c.active_output_device_name = Some(device_name);
+        // Attempt to open new output
+        if current_name.is_some() {
+            if let Ok((new_sink, name)) = Self::open_current_default_output() {
+                self.sink = Some(new_sink);
+                self.active_output_device_name = Some(name);
                 if let Some(p) = path {
-                    info!("[AudioDeviceMonitor] Restoring playback to {} at {:?}", p, pos);
-                    let _ = c.replace_current_from_path(&p, pos, was_playing);
+                    info!("[AudioDeviceMonitor] Restoring playback to {}", p);
+                    let _ = self.replace_current_from_path(&p, pos, was_playing);
                 }
             }
-
-            // 6. Old stream pause 3 seconds total before destruction
-            // Since we already waited 1s, wait 2 more seconds
-            thread::sleep(Duration::from_secs(2));
-
-            // 7. Cleanup old resources
-            // if let Some(d) = old_incoming {
-            //     d.clear();
-            // }
-            // if let Some(d) = old_current {
-            //     d.clear();
-            // }
-            drop(old_sink);
-            info!("[AudioDeviceMonitor] Old audio resources destroyed after 3s pause.");
-        });
+        }
     }
 
     fn dispose_audio(&mut self) {
@@ -485,7 +437,7 @@ fn start_default_output_monitor() {
             thread::sleep(DEFAULT_OUTPUT_POLL_INTERVAL);
 
             if let Ok(mut c) = controller().lock() {
-                c.spawn_safe_audio_reconstruction(false);
+                c.poll_output_device();
             }
         });
     });
@@ -706,9 +658,6 @@ pub fn get_loaded_audio_path() -> Option<String> {
 }
 
 pub fn handle_device_changed() -> Result<(), String> {
-    info!("[AudioDeviceMonitor] handle_device_changed: manual trigger from Flutter");
-    if let Ok(mut c) = controller().lock() {
-        c.spawn_safe_audio_reconstruction(true);
-    }
+    // Legacy stub: device switching is now fully handled by internal periodic polling in Rust.
     Ok(())
 }
